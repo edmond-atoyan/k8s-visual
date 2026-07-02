@@ -1,0 +1,31 @@
+[package]
+name = "k8s-visual"
+version = "0.1.0"
+edition = "2021"
+description = "A lightweight desktop app that makes Kubernetes architecture visible and understandable"
+license = "MIT"
+
+[workspace]
+members = ["core"]
+
+[lib]
+name = "k8s_visual_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+k8s-visual-core = { path = "core" }
+
+[profile.release]
+# Keep the shipped binary as small as possible.
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
