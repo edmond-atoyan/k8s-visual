@@ -1,6 +1,26 @@
+# build output
 node_modules/
 dist/
+build/
 src-tauri/target/
 src-tauri/gen/
+
+# environment / credentials - never commit these
+.env
+.env.*
+*.pem
+*.key
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+
+# local tooling state
+.claude/
+.vscode/
+.idea/
 *.log
+nohup.out
+
+# OS noise
 .DS_Store
+Thumbs.db

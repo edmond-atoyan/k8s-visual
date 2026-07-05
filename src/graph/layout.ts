@@ -6,7 +6,7 @@
 // Rows: pods (and other leaves) get sequential rows per ownership tree;
 // parents center over their children; Services/Ingresses/config align with
 // what they point at, then overlaps are pushed apart. No layout library
-// needed — the hierarchy is shallow and this stays fully predictable.
+// needed - the hierarchy is shallow and this stays fully predictable.
 
 import type { Kind, ResourceSummary } from "../types";
 import type { ResourceGraph } from "./build";
@@ -20,7 +20,9 @@ const Y_STEP = NODE_H + ROW_GAP;
 
 const COLUMN: Record<Kind, number> = {
   Ingress: 0,
+  NetworkPolicy: 0,
   Service: 1,
+  HorizontalPodAutoscaler: 1,
   Deployment: 2,
   StatefulSet: 2,
   DaemonSet: 2,
@@ -31,6 +33,9 @@ const COLUMN: Record<Kind, number> = {
   ConfigMap: 5,
   Secret: 5,
   PersistentVolumeClaim: 5,
+  PersistentVolume: 6,
+  StorageClass: 7,
+  Node: 6,
 };
 
 // Stable ordering of trees within the workload columns.
@@ -113,25 +118,43 @@ export function layoutGraph(graph: ResourceGraph): Positioned[] {
     services.map((r) => ({ uid: r.uid, desired: desiredFromEdges(r, new Set(["selects"])) })),
   ).forEach((row, uid) => rows.set(uid, row));
 
-  const ingresses = resources.filter((r) => r.kind === "Ingress");
+  // HPAs sit next to Services and point at their scaled workload.
+  const hpas = resources.filter((r) => r.kind === "HorizontalPodAutoscaler");
   resolveRows(
-    ingresses.map((r) => ({ uid: r.uid, desired: desiredFromEdges(r, new Set(["refs"])) })),
+    hpas.map((r) => ({ uid: r.uid, desired: desiredFromEdges(r, new Set(["scales", "refs"])) })),
   ).forEach((row, uid) => rows.set(uid, row));
 
-  // 3. Config & storage center on the pods that reference them.
-  const configKinds = new Set(["ConfigMap", "Secret", "PersistentVolumeClaim"]);
-  const configs = resources.filter((r) => configKinds.has(r.kind));
+  const ingresses = resources.filter((r) => r.kind === "Ingress");
+  resolveRows(
+    ingresses.map((r) => ({ uid: r.uid, desired: desiredFromEdges(r, new Set(["routes", "refs"])) })),
+  ).forEach((row, uid) => rows.set(uid, row));
+
+  const netpols = resources.filter((r) => r.kind === "NetworkPolicy");
+  resolveRows(
+    netpols.map((r) => ({ uid: r.uid, desired: desiredFromEdges(r, new Set(["protects"])) })),
+  ).forEach((row, uid) => rows.set(uid, row));
+
+  // 3. Config & storage columns center on whatever points at them.
+  const incomingKinds = new Set(["mounts", "refs", "binds", "backs"]);
   const desiredFor = (uid: string): number => {
     const sources = edges
-      .filter((e) => e.kind === "refs" && e.target === uid)
+      .filter((e) => incomingKinds.has(e.kind) && e.target === uid)
       .map((e) => rows.get(e.source))
       .filter((y): y is number => y !== undefined);
     if (sources.length === 0) return cursor;
     return sources.reduce((a, b) => a + b, 0) / sources.length;
   };
-  resolveRows(configs.map((r) => ({ uid: r.uid, desired: desiredFor(r.uid) }))).forEach(
-    (row, uid) => rows.set(uid, row),
-  );
+  for (const kinds of [
+    ["ConfigMap", "Secret", "PersistentVolumeClaim"],
+    ["PersistentVolume"],
+    ["StorageClass"],
+  ]) {
+    const set = new Set(kinds);
+    const column = resources.filter((r) => set.has(r.kind));
+    resolveRows(column.map((r) => ({ uid: r.uid, desired: desiredFor(r.uid) }))).forEach(
+      (row, uid) => rows.set(uid, row),
+    );
+  }
 
   return resources.map((resource) => ({
     resource,

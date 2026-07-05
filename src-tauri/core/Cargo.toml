@@ -1,13 +1,19 @@
 [package]
 name = "k8s-visual-core"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 description = "Kubernetes client bridge for K8s Visual (no UI dependencies)"
 license = "MIT"
 
 [dependencies]
-kube = { version = "4", default-features = false, features = ["client", "rustls-tls"] }
+# "ring" matters: it selects the rustls crypto provider. Without it rustls
+# panics at TLS-client construction ("no process-level CryptoProvider"),
+# which killed the app on its first connect.
+kube = { version = "4", default-features = false, features = ["client", "rustls-tls", "ring", "ws"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
 thiserror = "2"
-tokio = { version = "1", default-features = false, features = ["macros"] }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "io-util", "net", "time", "sync", "process"] }

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="hept"><path d="M 593.1 81.0 L 798.4 179.9 Q 879.5 219.0 899.5 306.7 L 950.2 528.8 Q 970.2 616.6 914.1 686.9 L 772.0 865.1 Q 715.9 935.5 625.9 935.5 L 398.1 935.5 Q 308.1 935.5 252.0 865.1 L 109.9 686.9 Q 53.8 616.6 73.8 528.8 L 124.5 306.7 Q 144.5 219.0 225.6 179.9 L 430.9 81.0 Q 512.0 42.0 593.1 81.0 Z"/></clipPath>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+  <g clip-path="url(#hept)">
+    <!-- painted color patches: blue base, then teal / purple / orange / yellow -->
+    <rect x="-80" y="-80" width="1184" height="1184" fill="#2e5cd6"/>
+    <path fill="#159f8c" d="M 690 -50 C 650 60 710 160 665 270 C 630 370 705 460 678 555 C 660 620 715 655 790 675 C 870 697 990 725 1100 750 L 1100 -50 Z"/>
+    <path fill="#7e3fc2" d="M 1100 720 C 970 690 850 655 770 675 C 700 695 640 740 600 780 C 560 820 510 900 505 1000 C 503 1035 502 1060 502 1080 L 1100 1080 Z"/>
+    <path fill="#e85a17" d="M -80 755 C 80 730 220 775 330 750 C 420 730 480 775 520 825 C 555 870 574 955 572 1080 L -80 1080 Z"/>
+    <path fill="#f6b021" d="M -80 255 C 80 225 210 285 300 320 C 360 348 345 440 330 505 C 315 565 345 620 315 660 C 285 705 150 735 -80 768 Z"/>
+    <!-- soft lighter blotches for a painted feel -->
+    <g filter="url(#soft)" opacity="0.32">
+      <ellipse cx="420" cy="160" rx="130" ry="60" fill="#5b83ea" transform="rotate(-12 420 160)"/>
+      <ellipse cx="620" cy="250" rx="90" ry="48" fill="#5b83ea" transform="rotate(18 620 250)"/>
+      <ellipse cx="420" cy="510" rx="45" ry="90" fill="#5b83ea" transform="rotate(6 420 510)"/>
+      <ellipse cx="150" cy="470" rx="55" ry="110" fill="#ffd05c" transform="rotate(8 150 470)"/>
+      <ellipse cx="890" cy="380" rx="60" ry="130" fill="#2fbfa9" transform="rotate(-8 890 380)"/>
+      <ellipse cx="840" cy="870" rx="110" ry="55" fill="#9a63d6" transform="rotate(14 840 870)"/>
+      <ellipse cx="250" cy="900" rx="110" ry="50" fill="#f47a3a" transform="rotate(-10 250 900)"/>
+    </g>
+  </g>
+  <!-- ship's wheel -->
+  <circle cx="512" cy="512" r="252" fill="none" stroke="#ffffff" stroke-width="58"/>
+  <path d="M 512.0 394.0 L 512.0 160.0 M 604.3 438.4 L 787.2 292.5 M 627.0 538.3 L 855.2 590.3 M 563.2 618.3 L 664.7 829.1 M 460.8 618.3 L 359.3 829.1 M 397.0 538.3 L 168.8 590.3 M 419.7 438.4 L 236.8 292.5 " stroke="#ffffff" stroke-width="46" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="120" fill="#ffffff"/>
+  <path d="M 574.0 512.0 L 543.0 565.7 L 481.0 565.7 L 450.0 512.0 L 481.0 458.3 L 543.0 458.3 Z" fill="#2e5cd6"/>
+</svg>
