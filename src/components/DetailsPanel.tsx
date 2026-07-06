@@ -632,11 +632,10 @@ function TerminalAiBox({ resource: r, issues, terminal }: Props) {
           <button
             key={tool.id}
             className="chip"
-            disabled={!tool.installed}
             title={
               tool.installed
                 ? `Type a sanitized ${r.kind} summary into ${tool.name} for review`
-                : `${tool.name} not found on PATH`
+                : `${tool.name} is not installed - click for install instructions`
             }
             onClick={() => terminal.ask(tool.id, r, issues)}
           >

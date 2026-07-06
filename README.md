@@ -11,13 +11,11 @@ debugging, and managing clusters - with a built-in terminal and optional AI
 CLI integration.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
+![Linux](https://img.shields.io/badge/Linux-available-2ea44f.svg)
+![macOS & Windows](https://img.shields.io/badge/macOS%20%26%20Windows-in%20progress-orange.svg)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
-  <img src="docs/screenshot-light.png" alt="K8s Visual showing a namespace as a graph: Ingress routes to Services, a Deployment owns ReplicaSets, ReplicaSets run Pods, and Pods mount ConfigMaps and Secrets. A details panel explains the selected Deployment with tabs for status, events, logs, YAML and actions." width="920">
-</picture>
+<img src="docs/screenshot-dark.png" alt="K8s Visual: a namespace drawn as a live graph (Ingress routes to Services, a Deployment owns ReplicaSets, ReplicaSets run Pods, Pods mount ConfigMaps and Secrets), a details panel explaining the selected Deployment, and the integrated terminal open at the bottom with context, namespace and AI CLI buttons." width="920">
 
 </div>
 
@@ -150,15 +148,22 @@ behind every operation. If something is unavailable - a missing metrics API,
 a missing permission - the app tells you exactly what is missing instead of
 pretending.
 
-## Install (Linux)
+## Install
 
-Download the latest **AppImage** (works on any distro), **.deb**, or
-**.rpm** from the [Releases page](../../releases).
+**Linux is available today; macOS and Windows builds are in progress.**
+
+Download the latest package from the [Releases page](../../releases):
 
 ```sh
-# AppImage: make it executable and run
-chmod +x K8s.Visual_*.AppImage
-./K8s.Visual_*.AppImage
+# Debian / Ubuntu (.deb)
+sudo dpkg -i "K8s Visual_1.0.0_amd64.deb"
+
+# Fedora / openSUSE / RHEL (.rpm)
+sudo rpm -i "K8s Visual-1.0.0-1.x86_64.rpm"
+
+# Any distro (portable AppImage)
+chmod +x "K8s Visual_1.0.0_amd64.AppImage"
+./"K8s Visual_1.0.0_amd64.AppImage"
 ```
 
 No Kubernetes tooling is required to try it - hit **"Explore the demo
@@ -174,7 +179,7 @@ cluster"** on the welcome screen.
   `aws` / `az` / `gcloud` for cloud connect; `claude` / `codex` for AI
   assistance
 
-> Windows and macOS builds are on the roadmap; the codebase is
+> macOS and Windows builds are actively in progress; the codebase is
 > cross-platform by construction (Tauri), Linux is simply first.
 
 ## Build from source
@@ -239,7 +244,7 @@ reach the UI); watch-based streaming is on the roadmap.
 - [ ] Command palette
 - [ ] Collapse/expand groups for very large namespaces
 - [ ] Gateway API resources (HTTPRoute)
-- [ ] Windows and macOS builds, Flatpak/AUR packaging
+- [ ] macOS and Windows builds (in progress), Flatpak/AUR packaging
 - [ ] Multi-cluster side-by-side
 
 ## Contributing

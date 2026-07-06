@@ -268,12 +268,11 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
         <EmptyMsg>
           <p>{metrics.reason ?? "Metrics API is not available in this cluster."}</p>
           <p>
-            K8s Visual reads <code>metrics.k8s.io</code> (the same API as <code>kubectl top</code>) and never
-            invents numbers - install{" "}
+            This view reads <code>metrics.k8s.io</code>, the same API <code>kubectl top</code> uses. Install{" "}
             <a href="https://github.com/kubernetes-sigs/metrics-server" target="_blank" rel="noreferrer">
               metrics-server
             </a>{" "}
-            to see live usage here.
+            in the cluster to see live usage here.
           </p>
         </EmptyMsg>
       </div>
@@ -290,8 +289,8 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
         Metrics <span className="h2-sub">- kubectl top with short-term history · {namespace}</span>
       </h2>
       <p className="about">
-        Live usage from the Metrics API, sampled every 5s while the app is open. Trends cover only this session -
-        K8s Visual does not fake historical data it doesn't have.
+        Live usage from the Metrics API, sampled every 5 seconds while the app is open. Trends cover the
+        current session.
       </p>
 
       <div className="trend-cards">

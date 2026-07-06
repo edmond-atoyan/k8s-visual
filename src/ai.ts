@@ -24,6 +24,12 @@ const NOT_AVAILABLE: AiToolStatus[] = [
   { id: "claude", name: "Claude Code", installed: false },
 ];
 
+/** Where to get each tool - shown when the user clicks one that is missing. */
+export const AI_TOOL_LINKS: Record<AiToolStatus["id"], string> = {
+  claude: "https://claude.com/claude-code",
+  codex: "https://github.com/openai/codex",
+};
+
 /** Detect installed AI CLIs (desktop app only; detection never sends data). */
 export async function detectAiTools(): Promise<AiToolStatus[]> {
   if (!inTauri()) return NOT_AVAILABLE;

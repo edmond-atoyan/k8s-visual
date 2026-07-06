@@ -5,10 +5,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 
-import { analyzeCommand, kubectlPrefix, type AiToolStatus } from "../ai";
+import { AI_TOOL_LINKS, analyzeCommand, kubectlPrefix, type AiToolStatus } from "../ai";
 import { inTauri } from "../providers/tauri";
 import type { ClusterInfo } from "../types";
-import { cloudTag, type Theme } from "../utils";
+import { cloudTag, openExternal, type Theme } from "../utils";
 import { AiLogo, Icon } from "./icons";
 
 export interface TerminalPanelProps {
@@ -21,7 +21,10 @@ export interface TerminalPanelProps {
   aiTools: AiToolStatus[] | null;
   /** Text to type into the shell (NOT executed - the user reviews and hits Enter). */
   pendingInput: string | null;
+  /** Show install instructions for a missing tool (set by quick actions elsewhere). */
+  pendingHint: "codex" | "claude" | null;
   onConsumedInput(): void;
+  onConsumedHint(): void;
   onClose(): void;
 }
 
@@ -267,7 +270,9 @@ export function TerminalPanel({
   theme,
   aiTools,
   pendingInput,
+  pendingHint,
   onConsumedInput,
+  onConsumedHint,
   onClose,
 }: TerminalPanelProps) {
   const [height, setHeight] = useState(300);
@@ -313,8 +318,19 @@ export function TerminalPanel({
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
+  const [installHint, setInstallHint] = useState<AiToolStatus | null>(null);
+  useEffect(() => {
+    if (pendingHint === null) return;
+    const tool = (aiTools ?? []).find((t) => t.id === pendingHint);
+    if (tool) setInstallHint(tool);
+    onConsumedHint();
+  }, [pendingHint, aiTools, onConsumedHint]);
   const openTool = (tool: AiToolStatus) => {
-    if (!tool.installed) return;
+    if (!tool.installed) {
+      setInstallHint(tool); // friendly pointer instead of a shell error
+      return;
+    }
+    setInstallHint(null);
     onConsumedInput(); // drop any stale pending input
     // Typed with Enter: launching the tool is the explicit user action here.
     void invokeActive(`${tool.id}\r`);
@@ -389,13 +405,12 @@ export function TerminalPanel({
         {(aiTools ?? []).map((tool) => (
           <button
             key={tool.id}
-            className="term-btn term-ai"
-            disabled={!tool.installed}
+            className={`term-btn term-ai${tool.installed ? "" : " missing"}`}
             aria-label={tool.name}
             title={
               tool.installed
                 ? `Open ${tool.name} in the active session${tool.version ? ` (${tool.version})` : ""}. Nothing is sent automatically.`
-                : `${tool.name} not found on PATH - install it to use AI assistance here`
+                : `${tool.name} is not installed - click for install instructions`
             }
             onClick={() => openTool(tool)}
           >
@@ -413,6 +428,25 @@ export function TerminalPanel({
         </div>
       )}
 
+      {installHint && (
+        <div className="term-install-hint">
+          <AiLogo tool={installHint.id} size={14} />
+          <span className="term-guard-msg">
+            <strong>{installHint.name}</strong> is not installed on this machine. Install it, then reopen
+            the terminal - the button lights up automatically once it is on your PATH.
+          </span>
+          <button
+            className="btn primary"
+            onClick={() => void openExternal(AI_TOOL_LINKS[installHint.id])}
+          >
+            Get {installHint.name} ↗
+          </button>
+          <button className="btn" onClick={() => setInstallHint(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {inTauri() ? (
         sessions.map((key) => (
           <TermSession
@@ -426,6 +460,18 @@ export function TerminalPanel({
             onConsumedInput={consumeCombined}
           />
         ))
+      ) : new URLSearchParams(window.location.search).has("termmock") ? (
+        // Docs/screenshot stand-in for the real PTY (browser demo only): shows
+        // what a session looks like without pretending a browser can host one.
+        <pre className="terminal-body term-mock" aria-hidden>
+          <span className="tm-p">user@demo</span>:<span className="tm-d">~</span>$ kubectl --context demo-cluster
+          -n demo-shop get pods{"\n"}
+          NAME                          READY   STATUS             RESTARTS   AGE{"\n"}
+          api-6b5c974d8f-fj2sm          1/1     <span className="tm-ok">Running</span>            0          26h{"\n"}
+          api-6b5c974d8f-qw8rt          0/1     <span className="tm-err">CrashLoopBackOff</span>   17         26h{"\n"}
+          storefront-7d9fc6b48-8kd4n    1/1     <span className="tm-ok">Running</span>            0          40d{"\n"}
+          <span className="tm-p">user@demo</span>:<span className="tm-d">~</span>$ <span className="tm-cursor">▊</span>
+        </pre>
       ) : (
         <div className="terminal-placeholder">
           The integrated terminal needs the desktop app - a browser tab cannot host a shell.

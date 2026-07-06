@@ -70,6 +70,7 @@ export default function App() {
   const [termMounted, setTermMounted] = useState(false);
   const [termVisible, setTermVisible] = useState(false);
   const [termInput, setTermInput] = useState<string | null>(null);
+  const [termHint, setTermHint] = useState<"codex" | "claude" | null>(null);
   const [aiTools, setAiTools] = useState<AiToolStatus[] | null>(null);
   const toggleTerminal = useCallback(() => {
     setTermMounted(true);
@@ -404,7 +405,9 @@ export default function App() {
               theme={theme}
               aiTools={aiTools}
               pendingInput={termInput}
+              pendingHint={termHint}
               onConsumedInput={() => setTermInput(null)}
+              onConsumedHint={() => setTermHint(null)}
               onClose={() => setTermVisible(false)}
             />
           </Suspense>
@@ -422,7 +425,15 @@ export default function App() {
             terminal={{
               tools: aiTools,
               open: () => openTerminalWith(null),
-              ask: (tool, r, issues) => openTerminalWith(askAiCommand(tool, buildResourceSummary(r, issues))),
+              ask: (tool, r, issues) => {
+                if (aiTools?.find((t) => t.id === tool)?.installed) {
+                  openTerminalWith(askAiCommand(tool, buildResourceSummary(r, issues)));
+                } else {
+                  // point at install instructions instead of a shell error
+                  openTerminalWith(null);
+                  setTermHint(tool);
+                }
+              },
               copySummary: (r, issues) =>
                 void navigator.clipboard.writeText(buildResourceSummary(r, issues)),
             }}

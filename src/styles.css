@@ -768,6 +768,26 @@ input[type="checkbox"]:focus-visible {
   background: var(--chrome);
 }
 
+/* a missing AI tool stays clickable - the click explains how to install it */
+.term-btn.term-ai.missing {
+  opacity: 0.55;
+}
+
+.term-btn.term-ai.missing:hover {
+  opacity: 0.85;
+}
+
+.term-install-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--grid);
+  background: color-mix(in srgb, var(--series-1) 7%, var(--surface));
+}
+
 .term-spacer {
   flex: 1;
 }
@@ -792,6 +812,30 @@ input[type="checkbox"]:focus-visible {
 /* the guard bar sits above the session body */
 .terminal-guard {
   flex: none;
+}
+
+/* docs screenshot stand-in for a live session (browser + ?termmock only) */
+.term-mock {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
+  color: #d6d5cd;
+  overflow: auto;
+}
+
+[data-theme="light"] .term-mock {
+  color: #33322f;
+}
+
+.term-mock .tm-p { color: #4cb85f; font-weight: 600; }
+.term-mock .tm-d { color: #539bf5; }
+.term-mock .tm-ok { color: #4cb85f; }
+.term-mock .tm-err { color: #e5716a; }
+.term-mock .tm-cursor { animation: cursor-blink 1.1s steps(1) infinite; }
+
+@keyframes cursor-blink {
+  50% { opacity: 0; }
 }
 
 .terminal-placeholder {

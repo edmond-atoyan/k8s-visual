@@ -24,3 +24,8 @@ nohup.out
 # OS noise
 .DS_Store
 Thumbs.db
+
+# release artifacts (uploaded to GitHub Releases, never committed)
+*.deb
+*.rpm
+*.AppImage
