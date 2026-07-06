@@ -156,13 +156,13 @@ Download the latest package from the [Releases page](../../releases):
 
 ```sh
 # Debian / Ubuntu (.deb)
-sudo dpkg -i "K8s Visual_1.0.0_amd64.deb"
+sudo dpkg -i "K8s.Visual_1.0.0_amd64.deb"
 
 # Fedora / openSUSE / RHEL (.rpm)
-sudo rpm -i "K8s Visual-1.0.0-1.x86_64.rpm"
+sudo rpm -i "K8s.Visual-1.0.0-1.x86_64.rpm"
 
 # Any distro (portable AppImage)
-chmod +x "K8s Visual_1.0.0_amd64.AppImage"
+chmod +x "K8s.Visual_1.0.0_amd64.AppImage"
 ./"K8s Visual_1.0.0_amd64.AppImage"
 ```
 
