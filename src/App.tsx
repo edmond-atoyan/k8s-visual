@@ -70,7 +70,7 @@ export default function App() {
   const [termMounted, setTermMounted] = useState(false);
   const [termVisible, setTermVisible] = useState(false);
   const [termInput, setTermInput] = useState<string | null>(null);
-  const [termHint, setTermHint] = useState<"codex" | "claude" | null>(null);
+  const [termHint, setTermHint] = useState<"codex" | "claude" | "gemini" | null>(null);
   const [aiTools, setAiTools] = useState<AiToolStatus[] | null>(null);
   const toggleTerminal = useCallback(() => {
     setTermMounted(true);
@@ -99,6 +99,8 @@ export default function App() {
   const [contexts, setContexts] = useState<ContextInfo[] | null>(null);
   const [contextsError, setContextsError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
+  /** True while the connect screen is shown over a still-live session. */
+  const [switching, setSwitching] = useState(false);
 
   useEffect(() => applyTheme(theme), [theme]);
 
@@ -120,11 +122,14 @@ export default function App() {
   }, []);
 
   // Read kubeconfig contexts for the welcome screen (desktop shell only).
+  // Re-read whenever the connect screen opens: cloud imports and external
+  // kubectl usage add contexts while the app runs.
   useEffect(() => {
     if (!inTauri()) {
       setContexts([]);
       return;
     }
+    if (provider && !switching) return;
     new TauriProvider()
       .listContexts()
       .then(setContexts)
@@ -132,17 +137,22 @@ export default function App() {
         setContexts([]);
         setContextsError(String(e));
       });
-  }, []);
+  }, [provider, switching]);
 
   const connect = useCallback(async (prov: ClusterProvider, context?: string) => {
     setConnecting(context ?? "demo");
     setError(null);
     try {
+      // Leaving a still-connected cluster (switch flow): close it first.
+      if (providerRef.current && providerRef.current !== prov) {
+        await providerRef.current.disconnect().catch(() => {});
+      }
       const info = await prov.connect(context);
       const first = await prov.getOverview();
       setProvider(prov);
       setCluster(info);
       setOverview(first);
+      setSwitching(false);
       setManagement(false); // every session starts read-only
       metricsHistory.current = newMetricsHistory();
       if (prov.mode === "demo") {
@@ -161,18 +171,10 @@ export default function App() {
     }
   }, []);
 
-  const disconnect = useCallback(() => {
-    void provider?.disconnect();
-    setProvider(null);
-    setCluster(null);
-    setOverview(null);
-    setSnapshot(null);
-    setSelectedUid(null);
-    setManagement(false);
-    setModal(null);
-    setError(null);
-    setView("overview");
-  }, [provider]);
+  // Keep a live handle on the provider for the switch flow (the connect
+  // callback must not capture a stale provider).
+  const providerRef = useRef<ClusterProvider | null>(null);
+  providerRef.current = provider;
 
   // Poll overview + the selected namespace's snapshot. Identical results are
   // dropped before setState so an idle cluster causes zero re-renders (and
@@ -241,7 +243,7 @@ export default function App() {
     [snapshot],
   );
 
-  if (!provider) {
+  if (!provider || switching) {
     return (
       <div className="app">
         <TopBar
@@ -263,6 +265,11 @@ export default function App() {
             contextsError={contextsError}
             inTauriShell={inTauri()}
             connecting={connecting}
+            onBack={
+              provider && cluster
+                ? { label: provider.mode === "demo" ? "demo cluster" : cluster.context, go: () => setSwitching(false) }
+                : undefined
+            }
             onConnect={(ctx) => void connect(new TauriProvider(), ctx)}
             onDemo={() => void connect(new DemoProvider())}
           />
@@ -311,7 +318,7 @@ export default function App() {
             setView(v);
             setSelectedUid(null);
           }}
-          onSwitchCluster={disconnect}
+          onSwitchCluster={() => setSwitching(true)}
         />
         <div className="center-col">
         <main className="main">

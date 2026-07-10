@@ -25,6 +25,16 @@ function lineClass(line: string): string {
   return "log-line";
 }
 
+/** Health-check noise: kubelet probes and the conventional health endpoints. */
+const PROBE_RE = /kube-probe|\/(healthz|readyz|livez)\b/i;
+
+/** Stable per-pod accent (identity, always paired with the pod name text). */
+function podSlot(pod: string): number {
+  let h = 0;
+  for (let i = 0; i < pod.length; i++) h = (h * 31 + pod.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 4) + 1;
+}
+
 /**
  * The visual `kubectl logs`: one-shot fetch or follow-stream, previous
  * container logs, container selection, aggregation across a workload's pods,
@@ -39,6 +49,8 @@ export function LogViewer({ provider, namespace, sources, aggregate = false }: P
   const [timestamps, setTimestamps] = useState(false);
   const [tail, setTail] = useState(200);
   const [filter, setFilter] = useState("");
+  const [hideProbes, setHideProbes] = useState(false);
+  const [level, setLevel] = useState<"all" | "err" | "warn">("all");
   const [autoScroll, setAutoScroll] = useState(true);
   const [paused, setPaused] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
@@ -130,7 +142,18 @@ export function LogViewer({ provider, namespace, sources, aggregate = false }: P
     setAutoScroll(atBottom);
   };
 
-  const visible = filter ? lines.filter((l) => l.toLowerCase().includes(filter.toLowerCase())) : lines;
+  let visible = filter ? lines.filter((l) => l.toLowerCase().includes(filter.toLowerCase())) : lines;
+  if (hideProbes) visible = visible.filter((l) => !PROBE_RE.test(l));
+  if (level === "err") visible = visible.filter((l) => lineClass(l).includes("err"));
+  if (level === "warn") visible = visible.filter((l) => lineClass(l).includes("warn"));
+
+  // When probes dominate the stream, say so instead of letting them drown
+  // the real logs.
+  const probeNoise =
+    !hideProbes &&
+    level === "all" &&
+    lines.length >= 20 &&
+    lines.filter((l) => PROBE_RE.test(l)).length / lines.length > 0.5;
   const kubectlCmd = KUBECTL_INTENT.logs(
     namespace,
     pod === ALL_PODS ? `-l <workload selector>` : pod,
@@ -187,6 +210,27 @@ export function LogViewer({ provider, namespace, sources, aggregate = false }: P
             onChange={(e) => setTail(Number(e.target.value) || 200)}
           />
         </label>
+        <button
+          className={`chip${hideProbes ? " on" : ""}`}
+          title="Hide kube-probe and /healthz /readyz /livez health-check lines"
+          onClick={() => setHideProbes((v) => !v)}
+        >
+          hide probes
+        </button>
+        <button
+          className={`chip${level === "err" ? " on" : ""}`}
+          title="Show only lines that look like errors"
+          onClick={() => setLevel((l) => (l === "err" ? "all" : "err"))}
+        >
+          errors only
+        </button>
+        <button
+          className={`chip${level === "warn" ? " on" : ""}`}
+          title="Show only lines that look like warnings"
+          onClick={() => setLevel((l) => (l === "warn" ? "all" : "warn"))}
+        >
+          warnings only
+        </button>
         <input
           className="search-box"
           type="search"
@@ -220,13 +264,36 @@ export function LogViewer({ provider, namespace, sources, aggregate = false }: P
 
       {error && <div className="error-banner">{error}</div>}
 
+      {probeNoise && (
+        <div className="issue-box log-noise">
+          Most visible lines are kube-probe health checks.{" "}
+          <button className="link-btn" onClick={() => setHideProbes(true)}>
+            Hide kube-probe
+          </button>{" "}
+          to reduce noise.
+        </div>
+      )}
+
       <div className="log-pane" ref={scrollRef} onScroll={onPaneScroll}>
-        {visible.length === 0 && <div className="log-line">(no log lines{filter ? " match the filter" : " yet"})</div>}
-        {visible.map((line, i) => (
-          <div key={i} className={lineClass(line)}>
-            {line}
+        {visible.length === 0 && (
+          <div className="log-line">
+            (no log lines{filter || hideProbes || level !== "all" ? " match the filters" : " yet"})
           </div>
-        ))}
+        )}
+        {visible.map((line, i) => {
+          const m = /^\[([^\]]+)\] /.exec(line);
+          return (
+            <div key={i} className={lineClass(line)}>
+              {m ? (
+                <>
+                  <span className={`log-pod pod-slot-${podSlot(m[1])}`}>[{m[1]}]</span> {line.slice(m[0].length)}
+                </>
+              ) : (
+                line
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <KubectlHint command={kubectlCmd} />

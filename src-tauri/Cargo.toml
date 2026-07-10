@@ -1,37 +1,25 @@
 [package]
-name = "k8s-visual"
-version = "1.0.0"
+name = "app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
 edition = "2021"
-description = "A lightweight desktop app that makes Kubernetes architecture visible and understandable"
-license = "MIT"
+rust-version = "1.77.2"
 
-[workspace]
-members = ["core"]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "k8s_visual_lib"
+name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-futures = { version = "0.3", default-features = false, features = ["std"] }
-k8s-visual-core = { path = "core" }
-# Integrated terminal (PTY). Cross-platform; kept out of the core crate on
-# purpose - the shell is the user's own, not Kubernetes logic.
-portable-pty = "0.9"
-tokio = { version = "1", default-features = false, features = ["process", "time", "rt"] }
-
-[profile.release]
-# Keep the shipped binary small — but never `panic = "abort"`: this is a
-# long-running desktop app, and an abort turns any library panic into the
-# whole window vanishing without a message.
-codegen-units = 1
-lto = true
-opt-level = "s"
-strip = true
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"

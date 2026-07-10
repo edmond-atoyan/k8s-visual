@@ -22,7 +22,7 @@ export interface TerminalPanelProps {
   /** Text to type into the shell (NOT executed - the user reviews and hits Enter). */
   pendingInput: string | null;
   /** Show install instructions for a missing tool (set by quick actions elsewhere). */
-  pendingHint: "codex" | "claude" | null;
+  pendingHint: "codex" | "claude" | "gemini" | null;
   onConsumedInput(): void;
   onConsumedHint(): void;
   onClose(): void;

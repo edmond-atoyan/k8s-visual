@@ -1,6 +1,6 @@
-// Prevents an extra console window on Windows in release builds.
+// Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    k8s_visual_lib::run()
+  app_lib::run();
 }

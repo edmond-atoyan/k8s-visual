@@ -25,7 +25,8 @@ export type IconName =
   | "switch"
   | "help"
   | "terminal-panel"
-  | "plus";
+  | "plus"
+  | "back";
 
 const PATHS: Record<IconName, JSX.Element> = {
   dashboard: (
@@ -143,6 +144,7 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   plus: <path d="M8 2.8v10.4M2.8 8h10.4" />,
+  back: <path d="M9.8 3 4.8 8l5 5M4.8 8h8.4" />,
   "terminal-panel": (
     <>
       <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.5" />
@@ -175,7 +177,14 @@ export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {
 // Official marks (user-supplied), rendered monochrome via currentColor so
 // they follow the theme like every other icon.
 
-export function AiLogo({ tool, size = 14 }: { tool: "codex" | "claude"; size?: number }) {
+export function AiLogo({ tool, size = 14 }: { tool: "codex" | "claude" | "gemini"; size?: number }) {
+  if (tool === "gemini") {
+    return (
+      <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd" aria-hidden>
+        <path d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z" />
+      </svg>
+    );
+  }
   if (tool === "codex") {
     return (
       <svg className="icon" width={size} height={size} viewBox="0 0 512 512" fill="currentColor" aria-hidden>

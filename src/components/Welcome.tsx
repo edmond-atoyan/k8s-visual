@@ -3,7 +3,7 @@ import { cloudApi } from "../providers/cloud";
 import type { CloudKind, ContextInfo } from "../types";
 import { cloudTag } from "../utils";
 import { CLOUD_PROVIDERS, CloudConnectPanel } from "./CloudConnect";
-import { CloudLogo } from "./icons";
+import { CloudLogo, Icon } from "./icons";
 import { Logo } from "./TopBar";
 
 interface Props {
@@ -12,6 +12,8 @@ interface Props {
   contextsError: string | null;
   inTauriShell: boolean;
   connecting: string | null;
+  /** Set while a cluster is still connected (switching): back returns to it. */
+  onBack?: { label: string; go(): void };
   onConnect(context: string): void;
   onDemo(): void;
 }
@@ -21,12 +23,18 @@ interface Props {
  * kubeconfig context, or a managed cloud cluster (EKS / AKS / GKE) imported
  * through the user's own cloud CLI.
  */
-export function Welcome({ contexts, contextsError, inTauriShell, connecting, onConnect, onDemo }: Props) {
+export function Welcome({ contexts, contextsError, inTauriShell, connecting, onBack, onConnect, onDemo }: Props) {
   const [cloudKind, setCloudKind] = useState<CloudKind | null>(null);
   const cloud = cloudApi();
 
   return (
     <div className="welcome">
+      {onBack && (
+        <button className="welcome-back" onClick={onBack.go} title={`Back to ${onBack.label}`}>
+          <Icon name="back" size={14} />
+          Back to {onBack.label}
+        </button>
+      )}
       <div className="inner">
         <Logo size={44} />
         <h1>K8s Visual</h1>

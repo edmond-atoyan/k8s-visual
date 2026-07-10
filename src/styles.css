@@ -982,6 +982,7 @@ button.sb-seg.sb-mgmt:hover {
 /* ---- sidebar ---- */
 
 .sidebar {
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--grid);
@@ -1660,6 +1661,7 @@ button.sb-seg.sb-mgmt:hover {
 /* ---- details panel ---- */
 
 .details {
+  scrollbar-gutter: stable;
   width: 300px;
   border-left: 1px solid var(--grid);
   background: var(--surface);
@@ -1951,6 +1953,32 @@ button.sb-seg.sb-mgmt:hover {
   background: var(--page);
 }
 
+.welcome {
+  position: relative;
+}
+
+/* quiet back navigation to the still-connected cluster (switch flow) */
+.welcome-back {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--ink-2);
+  transition:
+    background-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.welcome-back:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
 .welcome .inner {
   max-width: 560px;
   text-align: center;
@@ -2218,6 +2246,7 @@ button.sb-seg.sb-mgmt:hover {
 }
 
 .cluster-pick {
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2417,6 +2446,7 @@ button.sb-seg.sb-mgmt:hover {
 }
 
 .modal {
+  scrollbar-gutter: stable;
   width: min(560px, calc(100vw - 40px));
   max-height: calc(100vh - 60px);
   overflow-y: auto;
@@ -2540,6 +2570,7 @@ button.sb-seg.sb-mgmt:hover {
 
 /* Fixed-height console: streaming lines scroll inside, never grow the layout. */
 .log-pane {
+  scrollbar-gutter: stable;
   flex: none;
   height: clamp(200px, 44vh, 540px);
   overflow: auto;
@@ -2562,6 +2593,21 @@ button.sb-seg.sb-mgmt:hover {
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--ink-2);
+}
+
+/* per-pod identity accent on aggregated logs (fixed slot per pod name,
+   always alongside the pod name itself - never color alone) */
+.log-pod {
+  font-weight: 600;
+}
+
+.log-pod.pod-slot-1 { color: var(--series-1); }
+.log-pod.pod-slot-2 { color: var(--series-2); }
+.log-pod.pod-slot-3 { color: var(--series-3); }
+.log-pod.pod-slot-4 { color: var(--series-4); }
+
+.log-noise {
+  margin: 0 0 8px;
 }
 
 .log-line.err {

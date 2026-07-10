@@ -12,8 +12,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./providers/tauri";
 import type { EventInfo, ResourceSummary } from "./types";
 
+export type AiToolId = "codex" | "claude" | "gemini";
+
 export interface AiToolStatus {
-  id: "codex" | "claude";
+  id: AiToolId;
   name: string;
   installed: boolean;
   version?: string;
@@ -22,12 +24,14 @@ export interface AiToolStatus {
 const NOT_AVAILABLE: AiToolStatus[] = [
   { id: "codex", name: "Codex CLI", installed: false },
   { id: "claude", name: "Claude Code", installed: false },
+  { id: "gemini", name: "Gemini CLI", installed: false },
 ];
 
 /** Where to get each tool - shown when the user clicks one that is missing. */
-export const AI_TOOL_LINKS: Record<AiToolStatus["id"], string> = {
+export const AI_TOOL_LINKS: Record<AiToolId, string> = {
   claude: "https://claude.com/claude-code",
   codex: "https://github.com/openai/codex",
+  gemini: "https://github.com/google-gemini/gemini-cli",
 };
 
 /** Detect installed AI CLIs (desktop app only; detection never sends data). */
@@ -116,7 +120,7 @@ export function shellQuote(s: string): string {
  * The command typed (NOT executed) into the terminal for "ask AI about this
  * resource". The user reviews and presses Enter themselves.
  */
-export function askAiCommand(tool: "codex" | "claude", summary: string): string {
+export function askAiCommand(tool: AiToolId, summary: string): string {
   const prompt =
     `${summary}\n\n` +
     "Explain the likely problem and how to investigate with kubectl. " +

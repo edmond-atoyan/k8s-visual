@@ -30,9 +30,9 @@ interface Props {
   issues: string[];
   /** Integrated terminal / AI CLI quick actions (absent in contexts without a terminal). */
   terminal?: {
-    tools: { id: "codex" | "claude"; name: string; installed: boolean }[] | null;
+    tools: { id: "codex" | "claude" | "gemini"; name: string; installed: boolean }[] | null;
     open(): void;
-    ask(tool: "codex" | "claude", resource: ResourceSummary, issues: string[]): void;
+    ask(tool: "codex" | "claude" | "gemini", resource: ResourceSummary, issues: string[]): void;
     copySummary(resource: ResourceSummary, issues: string[]): void;
   };
   onSelectResource(uid: string): void;
