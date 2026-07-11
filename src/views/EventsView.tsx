@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { KUBECTL_INTENT } from "../actions";
+import { buildProblemChains } from "../chains";
 import { EmptyMsg, KubectlHint, SearchBox } from "../components/bits";
+import { ProblemChainList } from "../components/ProblemChains";
 import type { ClusterProvider, EventInfo, NamespaceSnapshot } from "../types";
 import { formatAge, formatClock } from "../utils";
 
@@ -53,6 +55,12 @@ export function EventsView({ provider, namespace, snapshot, onSelectResource }: 
     if (target) onSelectResource(target.uid);
   };
 
+  // Causal interpretation of the warnings below: grouped, explained, checkable.
+  const chains = useMemo(
+    () => (snapshot ? buildProblemChains(snapshot.resources, events ?? []) : []),
+    [snapshot, events],
+  );
+
   return (
     <div className="overview wide">
       <h2>
@@ -79,6 +87,16 @@ export function EventsView({ provider, namespace, snapshot, onSelectResource }: 
         <EmptyMsg>
           <p>No events in {namespace}. Kubernetes only keeps events for about an hour.</p>
         </EmptyMsg>
+      )}
+
+      {chains.length > 0 && (
+        <>
+          <h3 className="chain-heading">
+            Problems <span className="h2-sub">- what the warnings below mean, causally</span>
+          </h3>
+          <ProblemChainList chains={chains} onSelectResource={onSelectResource} />
+          <h3 className="chain-heading">All events</h3>
+        </>
       )}
 
       <div className="timeline">

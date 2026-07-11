@@ -118,6 +118,30 @@ export function cloudTag(context: string, server = ""): CloudTag | null {
   return null;
 }
 
+const LOCAL_FLAVORS: [RegExp, string][] = [
+  [/^minikube/, "minikube"],
+  [/^kind-/, "kind"],
+  [/^k3d-/, "k3d"],
+  [/docker-desktop|docker-for-desktop/, "docker"],
+  [/microk8s/i, "microk8s"],
+];
+
+/** Recognizable local-cluster flavor from the context name, if any. */
+export function contextFlavor(context: string): string | null {
+  for (const [pattern, flavor] of LOCAL_FLAVORS) {
+    if (pattern.test(context)) return flavor;
+  }
+  return null;
+}
+
+/** Badge text for the switcher: cloud provider, local flavor, or plain local. */
+export function providerBadge(context: string, server = ""): { text: string; detail?: string } {
+  const cloud = cloudTag(context, server);
+  if (cloud) return { text: cloud.provider, detail: cloud.detail };
+  const flavor = contextFlavor(context);
+  return { text: flavor ?? "local" };
+}
+
 // --- theme ---------------------------------------------------------------------
 
 export type Theme = "light" | "dark";

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { KUBECTL_INTENT } from "../actions";
+import { buildProblemChains } from "../chains";
+import { computeMetricsInsights } from "../insights";
 import { EmptyMsg, KubectlHint } from "../components/bits";
 import type { ClusterOverview, ClusterProvider, MetricsSnapshot, NamespaceSnapshot } from "../types";
-import { formatBytes, formatCpu } from "../utils";
+import { formatAge, formatBytes, formatCpu } from "../utils";
 
 /** Short-term local history, collected only while the app runs (never faked). */
 export interface MetricsHistory {
@@ -234,6 +236,30 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
     return map;
   }, [overview]);
 
+  // Optional Prometheus: detected once per cluster; never required.
+  const [prometheus, setPrometheus] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    provider
+      .detectPrometheus()
+      .then((p) => !cancelled && setPrometheus(p))
+      .catch(() => !cancelled && setPrometheus(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [provider]);
+
+  const insights = useMemo(() => {
+    if (!snapshot) return [];
+    return computeMetricsInsights({
+      namespace,
+      resources: snapshot.resources,
+      metrics,
+      nodeCapacity,
+      chains: buildProblemChains(snapshot.resources),
+    });
+  }, [snapshot, metrics, nodeCapacity, namespace]);
+
   // Aggregate pod metrics up to their root workload.
   const workloadRows = useMemo(() => {
     if (!metrics?.available || !snapshot) return [];
@@ -279,7 +305,15 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
     );
   }
 
-  const pods = [...metrics.pods].sort((a, b) => b.cpuMillis - a.cpuMillis);
+  // Join usage with pod state so Pending pods are explained, not zeroed.
+  const snapshotPods = (snapshot?.resources ?? []).filter((r) => r.kind === "Pod");
+  const usageByName = new Map(metrics.pods.map((p) => [p.name, p]));
+  const podRows = [
+    ...snapshotPods.filter((p) => p.status === "Pending"),
+    ...snapshotPods
+      .filter((p) => p.status !== "Pending")
+      .sort((a, b) => (usageByName.get(b.name)?.cpuMillis ?? 0) - (usageByName.get(a.name)?.cpuMillis ?? 0)),
+  ];
   const cpuSeries = history.cpu.get(`total:${namespace}`) ?? [];
   const memSeries = history.mem.get(`total:${namespace}`) ?? [];
 
@@ -291,7 +325,39 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
       <p className="about">
         Live usage from the Metrics API, sampled every 5 seconds while the app is open. Trends cover the
         current session.
+        {prometheus === null && " Prometheus not detected - K8s Visual is using the Kubernetes Metrics API."}
+        {typeof prometheus === "string" &&
+          ` Prometheus detected (${prometheus}) - deeper history integration is planned; live data below comes from the Metrics API.`}
       </p>
+
+      {snapshot && (
+        <div className="tiles metrics-tiles">
+          <div className="tile">
+            <div className="value">
+              {snapshot.resources.filter((r) => r.kind === "Pod" && r.status === "Running").length}
+            </div>
+            <div className="label">Running pods</div>
+          </div>
+          <div className={`tile${snapshot.resources.some((r) => r.kind === "Pod" && r.status === "Pending") ? " warn" : ""}`}>
+            <div className="value">
+              {snapshot.resources.filter((r) => r.kind === "Pod" && r.status === "Pending").length}
+            </div>
+            <div className="label">Pending pods</div>
+          </div>
+          <div className="tile">
+            <div className="value">
+              {snapshot.resources
+                .filter((r) => r.kind === "Pod")
+                .reduce((n, p) => n + (p.containers ?? []).reduce((m, c) => m + c.restarts, 0), 0)}
+            </div>
+            <div className="label">Container restarts</div>
+          </div>
+          <div className={`tile${insights.some((i) => i.severity !== "info") ? " warn" : ""}`}>
+            <div className="value">{insights.length}</div>
+            <div className="label">Insights</div>
+          </div>
+        </div>
+      )}
 
       <div className="trend-cards">
         <div className="trend-card">
@@ -311,6 +377,24 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
           <TrendChart series={memSeries} format={formatBytes} />
         </div>
       </div>
+
+      {insights.length > 0 && (
+        <>
+          <h3>Insights</h3>
+          <div className="insight-list">
+            {insights.map((ins, i) => (
+              <div key={i} className={`insight-card ${ins.severity}`}>
+                <div className="insight-title">
+                  <span className={`dot health-${ins.severity === "info" ? "neutral" : ins.severity}`} />
+                  <strong>{ins.title}</strong>
+                </div>
+                <p className="insight-detail">{ins.detail}</p>
+                {ins.checks && ins.checks.map((c) => <code className="insight-check" key={c}>{c}</code>)}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <h3>Nodes</h3>
       <table className="ns-table metrics-table">
@@ -376,6 +460,9 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
         <thead>
           <tr>
             <th>Pod</th>
+            <th>Status</th>
+            <th>Node</th>
+            <th>Age</th>
             <th>CPU</th>
             <th>Trend</th>
             <th>Memory</th>
@@ -383,23 +470,45 @@ export function MetricsView({ provider, namespace, snapshot, overview, history }
           </tr>
         </thead>
         <tbody>
-          {pods.map((p) => (
-            <tr key={p.name}>
-              <td className="cell-name">{p.name}</td>
-              <td>{formatCpu(p.cpuMillis)}</td>
-              <td>
-                <Sparkline series={history.cpu.get(`pod:${p.name}`) ?? []} />
-              </td>
-              <td>{formatBytes(p.memoryBytes)}</td>
-              <td>
-                <Sparkline series={history.mem.get(`pod:${p.name}`) ?? []} />
-              </td>
-            </tr>
-          ))}
-          {pods.length === 0 && (
+          {podRows.map((p) => {
+            const usage = usageByName.get(p.name);
+            const pending = p.status === "Pending";
+            return (
+              <tr key={p.name}>
+                <td className="cell-name">{p.name}</td>
+                <td>
+                  <span className="status">
+                    <span className={`dot health-${p.health}`} />
+                    {p.status}
+                  </span>
+                </td>
+                <td>{p.details["Node"] ?? "-"}</td>
+                <td>{formatAge(p.createdAt)}</td>
+                {pending || !usage ? (
+                  <td colSpan={4} style={{ color: "var(--muted)" }}>
+                    {pending
+                      ? "Pod is Pending, metrics are unavailable. Check Events."
+                      : "no usage reported yet"}
+                  </td>
+                ) : (
+                  <>
+                    <td>{formatCpu(usage.cpuMillis)}</td>
+                    <td>
+                      <Sparkline series={history.cpu.get(`pod:${p.name}`) ?? []} />
+                    </td>
+                    <td>{formatBytes(usage.memoryBytes)}</td>
+                    <td>
+                      <Sparkline series={history.mem.get(`pod:${p.name}`) ?? []} />
+                    </td>
+                  </>
+                )}
+              </tr>
+            );
+          })}
+          {podRows.length === 0 && (
             <tr>
-              <td colSpan={5} style={{ color: "var(--muted)" }}>
-                No pod metrics in {namespace}.
+              <td colSpan={8} style={{ color: "var(--muted)" }}>
+                No pods in {namespace}.
               </td>
             </tr>
           )}

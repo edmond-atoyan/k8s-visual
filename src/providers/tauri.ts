@@ -1,6 +1,12 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AccessCheck,
+  HelmActionRequest,
+  HelmChartHit,
+  HelmRelease,
+  HelmReleaseDetail,
+  HelmRepo,
+  HelmStatus,
   AccessResult,
   Action,
   ActionResult,
@@ -58,6 +64,42 @@ export class TauriProvider implements ClusterProvider {
 
   getEvents(namespace: string): Promise<EventInfo[]> {
     return invoke("get_events", { namespace });
+  }
+
+  helmStatus(): Promise<HelmStatus> {
+    return invoke("helm_status");
+  }
+  helmReleases(namespace?: string): Promise<HelmRelease[]> {
+    return invoke("helm_releases", { namespace: namespace ?? null });
+  }
+  helmReleaseDetail(namespace: string, name: string): Promise<HelmReleaseDetail> {
+    return invoke("helm_release_detail", { namespace, name });
+  }
+  helmRepos(): Promise<HelmRepo[]> {
+    return invoke("helm_repos");
+  }
+  helmSearch(query: string): Promise<HelmChartHit[]> {
+    return invoke("helm_search", { query });
+  }
+  helmShow(kind: "values" | "chart" | "readme", chart: string): Promise<string> {
+    return invoke("helm_show", { kind, chart });
+  }
+  helmRepoModify(op: "add" | "remove" | "update", name?: string, url?: string): Promise<string> {
+    return invoke("helm_repo_modify", { op, name: name ?? null, url: url ?? null });
+  }
+  helmAction(request: HelmActionRequest): Promise<string> {
+    return invoke("helm_action", {
+      op: request.op,
+      namespace: request.namespace,
+      release: request.release,
+      chart: "chart" in request ? request.chart : null,
+      revision: "revision" in request ? request.revision : null,
+      values: "values" in request ? (request.values ?? null) : null,
+    });
+  }
+
+  detectPrometheus(): Promise<string | null> {
+    return invoke("detect_prometheus");
   }
 
   getMetrics(namespace: string): Promise<MetricsSnapshot> {

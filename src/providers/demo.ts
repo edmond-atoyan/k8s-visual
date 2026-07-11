@@ -7,6 +7,12 @@
 
 import type {
   AccessCheck,
+  HelmActionRequest,
+  HelmChartHit,
+  HelmRelease,
+  HelmReleaseDetail,
+  HelmRepo,
+  HelmStatus,
   AccessResult,
   Action,
   ActionResult,
@@ -100,6 +106,7 @@ interface PodOpts {
   ports?: number[];
   createdAgoMs?: number;
   message?: string;
+  resources?: Partial<Pick<ContainerInfo, "cpuRequest" | "memoryRequest" | "cpuLimit" | "memoryLimit">>;
 }
 
 function pod(
@@ -131,6 +138,7 @@ function pod(
       state: opts.containerState ?? (pending ? "Waiting: PodScheduling" : "Running"),
       lastState: opts.lastState,
       ports: opts.ports ?? [],
+      ...opts.resources,
     },
   ];
   return res(
@@ -182,6 +190,8 @@ function buildDemoShop(): ResourceSummary[] {
       createdAgoMs: 40 * DAY,
     }),
     res("Service", "storefront", "ClusterIP", "neutral", {
+      labels: { "app.kubernetes.io/managed-by": "Helm" },
+      annotations: { "meta.helm.sh/release-name": "shop", "meta.helm.sh/release-namespace": NS },
       selector: { app: "storefront" },
       details: { Type: "ClusterIP", "Cluster IP": "10.96.114.23", Ports: "80 → 8080" },
       servicePorts: [{ port: 80, targetPort: "8080", protocol: "TCP" }],
@@ -209,7 +219,8 @@ function buildDemoShop(): ResourceSummary[] {
 
     // storefront: healthy Deployment -> ReplicaSet -> 3 Pods
     res("Deployment", "storefront", "3/3 ready", "good", {
-      labels: { app: "storefront" },
+      labels: { app: "storefront", "app.kubernetes.io/managed-by": "Helm" },
+      annotations: { "meta.helm.sh/release-name": "shop", "meta.helm.sh/release-namespace": NS },
       selector: { app: "storefront" },
       details: { Replicas: "3 ready / 3 desired (3 updated, 3 available)", Strategy: "RollingUpdate" },
       conditions: [
@@ -225,9 +236,9 @@ function buildDemoShop(): ResourceSummary[] {
       annotations: { "deployment.kubernetes.io/revision": "4" },
       createdAgoMs: 9 * DAY,
     }),
-    pod("storefront-7d9fc6b48-x2lqp", "storefront", owner("ReplicaSet", "storefront-7d9fc6b48"), "worker-1", { ports: [8080], refs: ["ConfigMap/app-config"] }),
-    pod("storefront-7d9fc6b48-8kd4n", "storefront", owner("ReplicaSet", "storefront-7d9fc6b48"), "worker-2", { ports: [8080], refs: ["ConfigMap/app-config"] }),
-    pod("storefront-7d9fc6b48-tr9wz", "storefront", owner("ReplicaSet", "storefront-7d9fc6b48"), "worker-1", { ports: [8080], refs: ["ConfigMap/app-config"] }),
+    pod("storefront-7d9fc6b48-x2lqp", "storefront", owner("ReplicaSet", "storefront-7d9fc6b48"), "worker-1", { ports: [8080], refs: ["ConfigMap/app-config"], resources: { cpuRequest: "100m", memoryRequest: "128Mi", cpuLimit: "250m", memoryLimit: "256Mi" } }),
+    pod("storefront-7d9fc6b48-8kd4n", "storefront", owner("ReplicaSet", "storefront-7d9fc6b48"), "worker-2", { ports: [8080], refs: ["ConfigMap/app-config"], resources: { cpuRequest: "100m", memoryRequest: "128Mi", cpuLimit: "250m", memoryLimit: "256Mi" } }),
+    pod("storefront-7d9fc6b48-tr9wz", "storefront", owner("ReplicaSet", "storefront-7d9fc6b48"), "worker-1", { ports: [8080], refs: ["ConfigMap/app-config"], resources: { cpuRequest: "100m", memoryRequest: "128Mi", cpuLimit: "250m", memoryLimit: "256Mi" } }),
 
     // api: degraded Deployment with a crash-looping pod and an old revision
     res("Deployment", "api", "1/2 ready", "warning", {
@@ -333,6 +344,7 @@ function buildDemoShop(): ResourceSummary[] {
       createdAgoMs: 40 * DAY,
     }),
     pod("postgres-0", "postgres", owner("StatefulSet", "postgres"), "worker-1", {
+      resources: { cpuRequest: "1", memoryRequest: "512Mi" },
       image: "postgres:16-alpine",
       ports: [5432],
       refs: ["Secret/db-credentials", "PersistentVolumeClaim/data-postgres-0"],
@@ -391,6 +403,33 @@ function buildDemoShop(): ResourceSummary[] {
     res("Secret", "tls-shop", "2 key(s)", "neutral", {
       details: { Type: "kubernetes.io/tls", Keys: "tls.crt, tls.key" },
       createdAgoMs: 40 * DAY,
+    }),
+    // The storage problem chain: Deployment -> RS -> Pod Pending -> PVC
+    // Pending -> StorageClass missing. Exercises the troubleshooting flow.
+    res("Deployment", "reports", "0/1 ready", "warning", {
+      labels: { app: "reports", "app.kubernetes.io/managed-by": "Helm" },
+      annotations: { "meta.helm.sh/release-name": "reports", "meta.helm.sh/release-namespace": NS },
+      details: { Replicas: "0 ready / 1 desired", Strategy: "RollingUpdate" },
+      createdAgoMs: 3 * DAY,
+    }),
+    res("ReplicaSet", "reports-6f9d7c5b44", "0/1 ready", "warning", {
+      owners: [owner("Deployment", "reports")],
+      labels: { app: "reports" },
+      details: { Replicas: "0 ready / 1 desired" },
+      createdAgoMs: 3 * DAY,
+    }),
+    pod("reports-6f9d7c5b44-x8j2p", "reports", owner("ReplicaSet", "reports-6f9d7c5b44"), "", {
+      status: "Pending",
+      health: "warning",
+      containerState: "Waiting: PodScheduling",
+      refs: ["PersistentVolumeClaim/reports-data"],
+      createdAgoMs: 3 * DAY,
+    }),
+    res("PersistentVolumeClaim", "reports-data", "Pending", "warning", {
+      labels: { app: "reports", "app.kubernetes.io/managed-by": "Helm" },
+      annotations: { "meta.helm.sh/release-name": "reports", "meta.helm.sh/release-namespace": NS },
+      details: { Requested: "5Gi", StorageClass: "fast-ssd", "Access modes": "ReadWriteOnce" },
+      createdAgoMs: 3 * DAY,
     }),
     res("PersistentVolumeClaim", "data-postgres-0", "Bound", "good", {
       details: { Capacity: "10Gi", StorageClass: "local-path", "Access modes": "ReadWriteOnce", Volume: "pv-postgres-0001" },
@@ -468,6 +507,8 @@ function buildEvents(): Record<string, EventInfo[]> {
       ev("Warning", "Failed", 'Failed to pull image "registry.example.com/recomendations:0.3.0": manifest unknown: repository not found', "Pod", "recommendations-58fd7c44b9-zt6mm", 12, 90_000, 3 * HOUR),
       ev("Warning", "Failed", "Error: ImagePullBackOff", "Pod", "recommendations-58fd7c44b9-zt6mm", 12, 90_000, 3 * HOUR),
       ev("Warning", "FailedScheduling", "0/3 nodes are available: 3 Insufficient memory. preemption: 0/3 nodes are available: 3 No preemption victims found.", "Pod", "analytics-7b664c55c8-pv4ks", 25, 60_000, 2 * HOUR),
+      ev("Warning", "FailedScheduling", "0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. preemption: 0/3 nodes are available: 3 Preemption is not helpful for scheduling.", "Pod", "reports-6f9d7c5b44-x8j2p", 18, 60_000, 3 * HOUR),
+      ev("Warning", "ProvisioningFailed", 'storageclass.storage.k8s.io "fast-ssd" not found', "PersistentVolumeClaim", "reports-data", 31, 120_000, 3 * HOUR),
       ev("Normal", "Pulled", 'Container image "registry.example.com/api:2.1.0" already present on machine', "Pod", "api-6b5c974d8f-qw8rt", 244, 2 * 60_000, 26 * HOUR),
       ev("Normal", "Started", "Started container api", "Pod", "api-6b5c974d8f-fj2sm", 1, 26 * HOUR),
       ev("Normal", "ScalingReplicaSet", "Scaled up replica set api-6b5c974d8f from 0 to 2", "Deployment", "api", 1, 26 * HOUR),
@@ -685,6 +726,95 @@ export class DemoProvider implements ClusterProvider {
 
   async getEvents(namespace: string): Promise<EventInfo[]> {
     return [...(this.events[namespace] ?? [])];
+  }
+
+  async helmStatus(): Promise<HelmStatus> {
+    return { installed: true, version: "v3.15.2 (demo)" };
+  }
+
+  async helmReleases(namespace?: string): Promise<HelmRelease[]> {
+    const releases: HelmRelease[] = [
+      {
+        name: "shop",
+        namespace: NS,
+        revision: 4,
+        updated: agoIso(9 * DAY),
+        status: "deployed",
+        chart: "shop-1.4.2",
+        appVersion: "2.1.0",
+      },
+      {
+        name: "reports",
+        namespace: NS,
+        revision: 2,
+        updated: agoIso(3 * DAY),
+        status: "failed",
+        chart: "reports-0.3.0",
+        appVersion: "0.3.0",
+      },
+    ];
+    return namespace ? releases.filter((r) => r.namespace === namespace) : releases;
+  }
+
+  async helmReleaseDetail(namespace: string, name: string): Promise<HelmReleaseDetail> {
+    if (name === "reports") {
+      return {
+        values: 'storage:\n  className: "fast-ssd"\n  size: 5Gi\nreplicas: 1\n',
+        manifest:
+          "# Source: reports/templates/deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: reports\n  namespace: " +
+          namespace +
+          "\n---\n# Source: reports/templates/pvc.yaml\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: reports-data\nspec:\n  storageClassName: fast-ssd\n  resources:\n    requests:\n      storage: 5Gi\n",
+        notes: "Reports will start once the PersistentVolumeClaim binds.",
+        history: [
+          { revision: 1, updated: agoIso(5 * DAY), status: "superseded", chart: "reports-0.2.1", appVersion: "0.2.1", description: "Install complete" },
+          { revision: 2, updated: agoIso(3 * DAY), status: "failed", chart: "reports-0.3.0", appVersion: "0.3.0", description: "Upgrade \"reports\" failed: timed out waiting for the condition" },
+        ],
+      };
+    }
+    return {
+      values: "image:\n  tag: 2.1.0\nreplicas: 3\ningress:\n  host: shop.example.com\n",
+      manifest:
+        "# Source: shop/templates/deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: storefront\n  namespace: " +
+        namespace +
+        "\n",
+      notes: "Visit https://shop.example.com to reach the storefront.",
+      history: [
+        { revision: 3, updated: agoIso(20 * DAY), status: "superseded", chart: "shop-1.4.1", appVersion: "2.0.0", description: "Upgrade complete" },
+        { revision: 4, updated: agoIso(9 * DAY), status: "deployed", chart: "shop-1.4.2", appVersion: "2.1.0", description: "Upgrade complete" },
+      ],
+    };
+  }
+
+  async helmRepos(): Promise<HelmRepo[]> {
+    return [{ name: "bitnami", url: "https://charts.bitnami.com/bitnami" }];
+  }
+
+  async helmSearch(query: string): Promise<HelmChartHit[]> {
+    const hits: HelmChartHit[] = [
+      { name: "bitnami/nginx", version: "18.2.1", appVersion: "1.27.1", description: "NGINX Open Source web server" },
+      { name: "bitnami/postgresql", version: "15.5.20", appVersion: "16.4.0", description: "PostgreSQL object-relational database" },
+      { name: "bitnami/redis", version: "20.1.0", appVersion: "7.4.0", description: "Redis in-memory data store" },
+    ];
+    const q = query.trim().toLowerCase();
+    return q ? hits.filter((h) => h.name.includes(q) || h.description.toLowerCase().includes(q)) : hits;
+  }
+
+  async helmShow(kind: "values" | "chart" | "readme", chart: string): Promise<string> {
+    if (kind === "values") return "# default values for " + chart + "\nreplicaCount: 1\nimage:\n  pullPolicy: IfNotPresent\n";
+    if (kind === "readme") return "# " + chart + "\n\nDemo readme - in a live cluster this comes from the chart itself.";
+    return "name: " + chart.split("/").pop() + "\nversion: 1.0.0\n";
+  }
+
+  async helmRepoModify(op: "add" | "remove" | "update", name?: string): Promise<string> {
+    return `Demo: helm repo ${op}${name ? ` ${name}` : ""} simulated - nothing was changed.`;
+  }
+
+  async helmAction(request: HelmActionRequest): Promise<string> {
+    return `Demo: helm ${request.op} ${request.release} simulated - the demo cluster keeps its state.`;
+  }
+
+  async detectPrometheus(): Promise<string | null> {
+    return null; // the demo cluster has no Prometheus - the message is part of the lesson
   }
 
   async getMetrics(namespace: string): Promise<MetricsSnapshot> {

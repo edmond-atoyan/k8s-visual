@@ -2048,6 +2048,77 @@ button.sb-seg.sb-mgmt:hover {
   margin-left: auto;
   color: var(--muted);
   font-size: 11px;
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* switcher rows: connect button + app-side hide control */
+.context-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.context-row .context-btn {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.context-row .context-btn strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-detail {
+  flex: none;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-hide {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  border-radius: 7px;
+  color: var(--muted);
+  transition:
+    background-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.ctx-hide:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* startup context reconciliation */
+.recon-card {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface));
+}
+
+.recon-kv {
+  margin: 10px 0 4px;
+}
+
+.recon-kv dd {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.recon-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
 }
 
 /* ---- cloud connect (EKS / AKS / GKE) ---- */
@@ -3158,4 +3229,259 @@ button.sb-seg.sb-mgmt:hover {
 .collecting {
   color: var(--muted);
   font-size: 12px;
+}
+
+/* ---- problem chains (Events view, details panel, assistant) ---- */
+
+.chain-heading {
+  margin: 18px 0 8px;
+}
+
+.chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.chain-card {
+  padding: 10px 12px;
+  border: 1px solid var(--grid);
+  border-left: 3px solid var(--warning);
+  border-radius: 0 10px 10px 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.chain-card.critical {
+  border-left-color: var(--critical);
+}
+
+.chain-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.chain-count {
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--grid);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.chain-path {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  margin: 8px 0 4px;
+}
+
+.chain-step {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chain-arrow {
+  color: var(--muted);
+  padding: 0 6px;
+  align-self: center;
+}
+
+.chain-node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 9px;
+  border: 1px solid var(--grid);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ink) 2.5%, var(--surface));
+  text-align: left;
+  min-width: 0;
+  transition:
+    border-color var(--dur-1) var(--ease),
+    background-color var(--dur-1) var(--ease);
+}
+
+.chain-node:not(:disabled):hover {
+  border-color: var(--baseline);
+  background: var(--hover);
+}
+
+.chain-node:disabled {
+  cursor: default;
+}
+
+.chain-node.ghost {
+  border-style: dashed;
+}
+
+.chain-kind {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.chain-name {
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-note {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.chain-cause {
+  margin: 6px 0 2px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.chain-why {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.chain-evidence {
+  margin: 6px 0 2px;
+  padding-left: 18px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.chain-evidence li {
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.chain-checks {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  background: var(--inset);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chain-checks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chain-checks code {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---- assistant ---- */
+
+.assistant-modal {
+  width: min(680px, calc(100vw - 40px));
+}
+
+.assistant-modal .modal-head .term-tag {
+  max-width: 180px;
+}
+
+.assistant-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 12px 0 4px;
+}
+
+.assistant-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.assistant-missing {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.assistant-note {
+  font-size: 11.5px;
+}
+
+.assistant-payload {
+  margin: 6px 0;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--inset);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- metrics insights ---- */
+
+.metrics-tiles {
+  margin: 4px 0 12px;
+}
+
+.insight-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.insight-card {
+  padding: 8px 12px;
+  border: 1px solid var(--grid);
+  border-left: 3px solid var(--baseline);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface);
+}
+
+.insight-card.critical { border-left-color: var(--critical); }
+.insight-card.warning { border-left-color: var(--warning); }
+
+.insight-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.insight-detail {
+  margin: 4px 0 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.insight-check {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }

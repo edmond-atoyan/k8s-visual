@@ -14,6 +14,7 @@ export type ViewId =
   | "logs"
   | "metrics"
   | "access"
+  | "helm"
   | "apply";
 
 const SECTIONS: { heading: string; items: { id: ViewId; label: string; icon: IconName }[] }[] = [
@@ -45,7 +46,10 @@ const SECTIONS: { heading: string; items: { id: ViewId; label: string; icon: Ico
   },
   {
     heading: "Manage",
-    items: [{ id: "apply", label: "Apply YAML", icon: "upload" }],
+    items: [
+      { id: "helm", label: "Helm", icon: "helm" },
+      { id: "apply", label: "Apply YAML", icon: "upload" },
+    ],
   },
 ];
 

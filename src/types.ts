@@ -143,6 +143,11 @@ export interface ContainerInfo {
   lastState?: string;
   ports: number[];
   init?: boolean;
+  /** Resource requests/limits as written in the spec ("250m", "128Mi"). */
+  cpuRequest?: string;
+  memoryRequest?: string;
+  cpuLimit?: string;
+  memoryLimit?: string;
 }
 
 export interface ServicePortInfo {
@@ -331,6 +336,60 @@ export interface RolloutRevision {
   current: boolean;
 }
 
+// --- Helm --------------------------------------------------------------------
+
+export interface HelmStatus {
+  installed: boolean;
+  version?: string;
+  detail?: string;
+}
+
+export interface HelmRelease {
+  name: string;
+  namespace: string;
+  revision: number;
+  updated: string;
+  /** deployed | failed | pending-install | pending-upgrade | pending-rollback | superseded | uninstalled */
+  status: string;
+  /** "chartname-1.2.3" */
+  chart: string;
+  appVersion: string;
+}
+
+export interface HelmRevision {
+  revision: number;
+  updated: string;
+  status: string;
+  chart: string;
+  appVersion: string;
+  description: string;
+}
+
+export interface HelmReleaseDetail {
+  values: string;
+  manifest: string;
+  notes: string;
+  history: HelmRevision[];
+}
+
+export interface HelmRepo {
+  name: string;
+  url: string;
+}
+
+export interface HelmChartHit {
+  name: string;
+  version: string;
+  appVersion: string;
+  description: string;
+}
+
+export type HelmActionRequest =
+  | { op: "install"; namespace: string; release: string; chart: string; values?: string }
+  | { op: "upgrade"; namespace: string; release: string; chart: string; values?: string }
+  | { op: "rollback"; namespace: string; release: string; revision: number }
+  | { op: "uninstall"; namespace: string; release: string };
+
 // --- provider ----------------------------------------------------------------
 
 export interface ResourceRef {
@@ -358,6 +417,18 @@ export interface ClusterProvider {
   getNodes(): Promise<NodeDetail[]>;
   getEvents(namespace: string): Promise<EventInfo[]>;
   getMetrics(namespace: string): Promise<MetricsSnapshot>;
+  /** "ns/name" of a Prometheus Service if one exists (optional enhancement). */
+  detectPrometheus(): Promise<string | null>;
+  helmStatus(): Promise<HelmStatus>;
+  helmReleases(namespace?: string): Promise<HelmRelease[]>;
+  helmReleaseDetail(namespace: string, name: string): Promise<HelmReleaseDetail>;
+  helmRepos(): Promise<HelmRepo[]>;
+  helmSearch(query: string): Promise<HelmChartHit[]>;
+  helmShow(kind: "values" | "chart" | "readme", chart: string): Promise<string>;
+  /** Repo management (local helm config) - management mode only in the UI. */
+  helmRepoModify(op: "add" | "remove" | "update", name?: string, url?: string): Promise<string>;
+  /** Cluster-mutating - management mode + confirmation only. */
+  helmAction(request: HelmActionRequest): Promise<string>;
   getYaml(ref: ResourceRef): Promise<string>;
   getLogs(query: LogQuery): Promise<string>;
   /** Follow logs; resolves to a stop function. */

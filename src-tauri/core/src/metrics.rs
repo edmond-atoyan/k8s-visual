@@ -72,7 +72,27 @@ pub async fn snapshot(client: &Client, namespace: &str) -> MetricsSnapshot {
     let pods_api = Api::<DynamicObject>::namespaced_with(client.clone(), namespace, &pod_ar);
 
     let lp = ListParams::default();
-    let (nodes_res, pods_res) = tokio::join!(nodes_api.list(&lp), pods_api.list(&lp));
+    // Hard deadline: when metrics-server is registered but failing (e.g. its
+    // Pod is crash-looping), the aggregated API can hold requests open
+    // indefinitely - found on a live k3s cluster. Fail fast and say why.
+    let both = tokio::time::timeout(
+        std::time::Duration::from_secs(6),
+        futures::future::join(nodes_api.list(&lp), pods_api.list(&lp)),
+    );
+    let (nodes_res, pods_res) = match both.await {
+        Ok(results) => results,
+        Err(_) => {
+            return MetricsSnapshot {
+                available: false,
+                reason: Some(
+                    "The Metrics API did not respond. metrics-server may be installed but failing - check its Pod in kube-system."
+                        .to_string(),
+                ),
+                nodes: vec![],
+                pods: vec![],
+            };
+        }
+    };
 
     let (nodes_list, pods_list) = match (nodes_res, pods_res) {
         (Ok(n), Ok(p)) => (n, p),

@@ -26,7 +26,9 @@ export type IconName =
   | "help"
   | "terminal-panel"
   | "plus"
-  | "back";
+  | "back"
+  | "sparkle"
+  | "helm";
 
 const PATHS: Record<IconName, JSX.Element> = {
   dashboard: (
@@ -145,6 +147,19 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   plus: <path d="M8 2.8v10.4M2.8 8h10.4" />,
   back: <path d="M9.8 3 4.8 8l5 5M4.8 8h8.4" />,
+  helm: (
+    <>
+      <circle cx="8" cy="8" r="4.6" />
+      <circle cx="8" cy="8" r="1.4" />
+      <path d="M8 3.4V1.2M8 12.6v2.2M3.4 8H1.2M12.6 8h2.2M4.8 4.8 3.2 3.2M11.2 11.2l1.6 1.6M11.2 4.8l1.6-1.6M4.8 11.2l-1.6 1.6" />
+    </>
+  ),
+  sparkle: (
+    <>
+      <path d="M8 1.8 9.5 6.5 14.2 8 9.5 9.5 8 14.2 6.5 9.5 1.8 8 6.5 6.5Z" />
+      <path d="M12.8 1.9v2.6M14.1 3.2h-2.6" />
+    </>
+  ),
   "terminal-panel": (
     <>
       <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.5" />
@@ -177,7 +192,18 @@ export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {
 // Official marks (user-supplied), rendered monochrome via currentColor so
 // they follow the theme like every other icon.
 
-export function AiLogo({ tool, size = 14 }: { tool: "codex" | "claude" | "gemini"; size?: number }) {
+export function AiLogo({ tool, size = 14 }: { tool: "codex" | "claude" | "gemini" | "ollama"; size?: number }) {
+  if (tool === "ollama") {
+    // Neutral local-model mark (no official monochrome asset bundled).
+    return (
+      <svg className="icon" width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" aria-hidden>
+        <rect x="3" y="4.5" width="10" height="9" rx="3" />
+        <path d="M5.5 4.8V2.6M10.5 4.8V2.6" />
+        <circle cx="6.2" cy="8.6" r="0.4" fill="currentColor" />
+        <circle cx="9.8" cy="8.6" r="0.4" fill="currentColor" />
+      </svg>
+    );
+  }
   if (tool === "gemini") {
     return (
       <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd" aria-hidden>

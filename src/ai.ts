@@ -12,7 +12,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./providers/tauri";
 import type { EventInfo, ResourceSummary } from "./types";
 
-export type AiToolId = "codex" | "claude" | "gemini";
+export type AiToolId = "codex" | "claude" | "gemini" | "ollama";
+
+/** Tools that can be launched directly in the terminal with a typed prompt
+ *  (Ollama needs a model choice first, so it is handled separately). */
+export const DIRECT_TOOLS: AiToolId[] = ["codex", "claude", "gemini"];
 
 export interface AiToolStatus {
   id: AiToolId;
@@ -25,6 +29,7 @@ const NOT_AVAILABLE: AiToolStatus[] = [
   { id: "codex", name: "Codex CLI", installed: false },
   { id: "claude", name: "Claude Code", installed: false },
   { id: "gemini", name: "Gemini CLI", installed: false },
+  { id: "ollama", name: "Ollama", installed: false },
 ];
 
 /** Where to get each tool - shown when the user clicks one that is missing. */
@@ -32,6 +37,7 @@ export const AI_TOOL_LINKS: Record<AiToolId, string> = {
   claude: "https://claude.com/claude-code",
   codex: "https://github.com/openai/codex",
   gemini: "https://github.com/google-gemini/gemini-cli",
+  ollama: "https://ollama.com",
 };
 
 /** Detect installed AI CLIs (desktop app only; detection never sends data). */

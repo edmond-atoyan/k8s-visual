@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ActionDescriptor } from "./actions";
 import { actionsFor } from "./actions";
-import { askAiCommand, buildResourceSummary, detectAiTools, type AiToolStatus } from "./ai";
+import { askAiCommand, buildResourceSummary, detectAiTools, type AiToolId, type AiToolStatus } from "./ai";
 import { ActionModal } from "./components/ActionModal";
 import { DetailsPanel } from "./components/DetailsPanel";
 import { Sidebar, type ViewId } from "./components/Sidebar";
@@ -10,8 +10,11 @@ import { TopBar } from "./components/TopBar";
 
 // Heavy (xterm) and optional - only loaded when the user opens the terminal.
 const TerminalPanel = lazy(() => import("./components/TerminalPanel"));
+const Assistant = lazy(() => import("./components/Assistant"));
 import { Welcome } from "./components/Welcome";
+import { buildProblemChains } from "./chains";
 import { buildGraph } from "./graph/build";
+import { clusterPrefs } from "./prefs";
 import { DEMO_DEFAULT_NAMESPACE, DemoProvider } from "./providers/demo";
 import { inTauri, TauriProvider } from "./providers/tauri";
 import type {
@@ -29,6 +32,7 @@ import { ConfigSecretsView } from "./views/ConfigSecretsView";
 import { EventsView } from "./views/EventsView";
 import { ExplorerView } from "./views/ExplorerView";
 import { GraphView } from "./views/GraphView";
+import { HelmView } from "./views/HelmView";
 import { LogsView } from "./views/LogsView";
 import { MetricsView, newMetricsHistory } from "./views/MetricsView";
 import { NetworkingView } from "./views/NetworkingView";
@@ -48,6 +52,7 @@ const NAMESPACED_VIEWS: ViewId[] = [
   "events",
   "logs",
   "metrics",
+  "helm",
 ];
 
 export default function App() {
@@ -70,8 +75,9 @@ export default function App() {
   const [termMounted, setTermMounted] = useState(false);
   const [termVisible, setTermVisible] = useState(false);
   const [termInput, setTermInput] = useState<string | null>(null);
-  const [termHint, setTermHint] = useState<"codex" | "claude" | "gemini" | null>(null);
+  const [termHint, setTermHint] = useState<AiToolId | null>(null);
   const [aiTools, setAiTools] = useState<AiToolStatus[] | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const toggleTerminal = useCallback(() => {
     setTermMounted(true);
     setTermVisible((v) => !v);
@@ -126,7 +132,19 @@ export default function App() {
   // kubectl usage add contexts while the app runs.
   useEffect(() => {
     if (!inTauri()) {
-      setContexts([]);
+      // Docs/screenshot stand-in for a populated kubeconfig (browser only).
+      setContexts(
+        new URLSearchParams(window.location.search).has("ctxmock")
+          ? [
+              { name: "arn:aws:eks:eu-central-1:123456789012:cluster/devopshub-eks", cluster: "devopshub-eks", user: "aws", current: false },
+              { name: "staging-aks", cluster: "staging-aks", user: "clusterUser", current: false },
+              { name: "gke_shop-project_europe-west1_prod-gke", cluster: "prod-gke", user: "gke", current: false },
+              { name: "minikube", cluster: "minikube", user: "minikube", current: false },
+              { name: "kind-dev", cluster: "kind-dev", user: "kind-dev", current: false },
+              { name: "default", cluster: "default", user: "default", current: true },
+            ]
+          : [],
+      );
       return;
     }
     if (provider && !switching) return;
@@ -155,12 +173,21 @@ export default function App() {
       setSwitching(false);
       setManagement(false); // every session starts read-only
       metricsHistory.current = newMetricsHistory();
+      const prefKey = prov.mode === "demo" ? "demo" : info.context;
+      clusterPrefs.setLastContext(prefKey);
       if (prov.mode === "demo") {
-        setNamespace(DEMO_DEFAULT_NAMESPACE);
+        setNamespace(clusterPrefs.namespaceFor(prefKey) ?? DEMO_DEFAULT_NAMESPACE);
         setView("graph"); // land newcomers on the richest demo graph
       } else {
         const names = first.namespaces.map((n) => n.name);
-        setNamespace(names.includes("default") ? "default" : (names[0] ?? "default"));
+        const remembered = clusterPrefs.namespaceFor(prefKey);
+        setNamespace(
+          remembered && names.includes(remembered)
+            ? remembered
+            : names.includes("default")
+              ? "default"
+              : (names[0] ?? "default"),
+        );
         setView("overview");
       }
       setSelectedUid(null);
@@ -175,6 +202,31 @@ export default function App() {
   // callback must not capture a stale provider).
   const providerRef = useRef<ClusterProvider | null>(null);
   providerRef.current = provider;
+
+  /** Change namespace and remember it for this cluster. */
+  const changeNamespace = (ns: string) => {
+    setNamespace(ns);
+    const key = provider?.mode === "demo" ? "demo" : cluster?.context;
+    if (key) clusterPrefs.setNamespace(key, ns);
+  };
+
+  // Startup reconciliation: the kubeconfig current-context moved under us
+  // since the last session. Never auto-switch - ask.
+  const [reconcileDismissed, setReconcileDismissed] = useState(false);
+  const reconcile = useMemo(() => {
+    if (provider || reconcileDismissed || !contexts) return undefined;
+    const last = clusterPrefs.lastContext();
+    if (!last || last === "demo" || !contexts.some((c) => c.name === last)) return undefined;
+    const current = contexts.find((c) => c.current)?.name;
+    if (!current || current === last) return undefined;
+    return {
+      previous: last,
+      current,
+      onPrevious: () => void connect(new TauriProvider(), last),
+      onCurrent: () => void connect(new TauriProvider(), current),
+      onDismiss: () => setReconcileDismissed(true),
+    };
+  }, [provider, reconcileDismissed, contexts, connect]);
 
   // Poll overview + the selected namespace's snapshot. Identical results are
   // dropped before setState so an idle cluster causes zero re-renders (and
@@ -243,6 +295,12 @@ export default function App() {
     [snapshot],
   );
 
+  // Problem chains from live state (event evidence is added on the Events
+  // page, which fetches events itself).
+  const allChains = useMemo(() => (snapshot ? buildProblemChains(snapshot.resources) : []), [snapshot]);
+  const chainsFor = (uid: string) =>
+    allChains.filter((c) => c.affected.uid === uid || c.chain.some((l) => l.uid === uid));
+
   if (!provider || switching) {
     return (
       <div className="app">
@@ -265,6 +323,8 @@ export default function App() {
             contextsError={contextsError}
             inTauriShell={inTauri()}
             connecting={connecting}
+            activeContext={provider ? (provider.mode === "demo" ? "demo" : cluster?.context) : undefined}
+            reconcile={reconcile}
             onBack={
               provider && cluster
                 ? { label: provider.mode === "demo" ? "demo cluster" : cluster.context, go: () => setSwitching(false) }
@@ -301,12 +361,13 @@ export default function App() {
         showNamespace={view !== "overview" && view !== "nodes"}
         theme={theme}
         onNamespace={(ns) => {
-          setNamespace(ns);
+          changeNamespace(ns);
           setSelectedUid(null);
         }}
         onToggleManagement={() => setManagement((v) => !v)}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onToggleTerminal={toggleTerminal}
+        onToggleAssistant={() => setAssistantOpen(true)}
         onRefresh={() => void refresh()}
       />
       <div className="app-body">
@@ -328,7 +389,7 @@ export default function App() {
             <OverviewView
               overview={overview}
               onOpenNamespace={(name) => {
-                setNamespace(name);
+                changeNamespace(name);
                 setView("graph");
               }}
               onOpenNodes={() => setView("nodes")}
@@ -367,7 +428,7 @@ export default function App() {
               onAction={openAction}
               onSelectPod={(ns, name) => {
                 if (ns !== namespace) {
-                  setNamespace(ns);
+                  changeNamespace(ns);
                   pendingSelect.current = { kind: "Pod", name };
                 } else {
                   pendingSelect.current = { kind: "Pod", name };
@@ -396,6 +457,15 @@ export default function App() {
             />
           )}
           {view === "access" && <AccessView provider={provider} namespace={namespace} />}
+          {view === "helm" && (
+            <HelmView
+              provider={provider}
+              namespace={namespace}
+              management={management}
+              snapshot={snapshot}
+              onSelectResource={selectByUid}
+            />
+          )}
           {view === "apply" && (
             <ApplyYamlView provider={provider} namespace={namespace} management={management} />
           )}
@@ -429,8 +499,10 @@ export default function App() {
             resource={selected}
             management={management}
             issues={issuesByUid.get(selected.uid) ?? []}
+            chains={chainsFor(selected.uid)}
             terminal={{
               tools: aiTools,
+              assistant: () => setAssistantOpen(true),
               open: () => openTerminalWith(null),
               ask: (tool, r, issues) => {
                 if (aiTools?.find((t) => t.id === tool)?.installed) {
@@ -462,6 +534,28 @@ export default function App() {
           overview={overview}
           onToggleManagement={() => setManagement((v) => !v)}
         />
+      )}
+
+      {assistantOpen && cluster && provider && snapshot && (
+        <Suspense fallback={null}>
+          <Assistant
+            cluster={cluster}
+            mode={provider.mode}
+            namespace={namespace}
+            resources={snapshot.resources}
+            chains={allChains}
+            selected={selected}
+            selectedIssues={selected ? (issuesByUid.get(selected.uid) ?? []) : []}
+            aiTools={aiTools}
+            onSelectResource={(uid) => setSelectedUid(uid)}
+            onHandOff={(command) => openTerminalWith(command)}
+            onInstallHint={(tool) => {
+              openTerminalWith(null);
+              setTermHint(tool);
+            }}
+            onClose={() => setAssistantOpen(false)}
+          />
+        </Suspense>
       )}
 
       {modal && cluster && (

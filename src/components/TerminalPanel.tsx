@@ -5,7 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 
-import { AI_TOOL_LINKS, analyzeCommand, kubectlPrefix, type AiToolStatus } from "../ai";
+import { AI_TOOL_LINKS, analyzeCommand, kubectlPrefix, type AiToolId, type AiToolStatus } from "../ai";
 import { inTauri } from "../providers/tauri";
 import type { ClusterInfo } from "../types";
 import { cloudTag, openExternal, type Theme } from "../utils";
@@ -22,7 +22,7 @@ export interface TerminalPanelProps {
   /** Text to type into the shell (NOT executed - the user reviews and hits Enter). */
   pendingInput: string | null;
   /** Show install instructions for a missing tool (set by quick actions elsewhere). */
-  pendingHint: "codex" | "claude" | "gemini" | null;
+  pendingHint: AiToolId | null;
   onConsumedInput(): void;
   onConsumedHint(): void;
   onClose(): void;
@@ -402,7 +402,7 @@ export function TerminalPanel({
         >
           {copied ? "copied" : "copy kubectl prefix"}
         </button>
-        {(aiTools ?? []).map((tool) => (
+        {(aiTools ?? []).filter((t) => t.id !== "ollama").map((tool) => (
           <button
             key={tool.id}
             className={`term-btn term-ai${tool.installed ? "" : " missing"}`}

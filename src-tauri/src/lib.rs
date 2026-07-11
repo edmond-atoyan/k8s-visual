@@ -12,8 +12,9 @@ use futures::StreamExt;
 use k8s_visual_core::model::{
     AccessCheck, AccessResult, Action, ActionResult, ApplyResult, CloudCliStatus, CloudCluster,
     CloudImportOutcome, CloudKind, CloudScope, ClusterInfo, ClusterOverview, ContextInfo,
-    EventInfo, ExecRequest, ExecResult, LogQuery, MetricsSnapshot, NamespaceSnapshot, NodeDetail,
-    PortForwardInfo, PortForwardRequest, RolloutRevision, SecretKey,
+    EventInfo, ExecRequest, ExecResult, HelmChartHit, HelmRelease, HelmReleaseDetail, HelmRepo,
+    HelmStatus, LogQuery, MetricsSnapshot, NamespaceSnapshot, NodeDetail, PortForwardInfo,
+    PortForwardRequest, RolloutRevision, SecretKey,
 };
 use k8s_visual_core::portforward::PortForwardManager;
 use k8s_visual_core::Bridge;
@@ -138,6 +139,13 @@ async fn get_events(
     namespace: String,
 ) -> Result<Vec<EventInfo>, String> {
     with_bridge!(state, b => b.events(&namespace).await)
+}
+
+#[tauri::command]
+async fn detect_prometheus(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let guard = state.0.lock().await;
+    let bridge = guard.as_ref().ok_or("Not connected to a cluster")?;
+    Ok(bridge.detect_prometheus().await)
 }
 
 #[tauri::command]
@@ -326,6 +334,104 @@ async fn detect_ai_tools() -> Result<Vec<AiToolStatus>, String> {
     Ok(terminal::detect_ai_tools().await)
 }
 
+// --- Helm (see core::helm; every command pins --kube-context) -----------------
+
+/// The context the app is connected to - helm commands never rely on the
+/// kubeconfig current-context.
+async fn app_context(state: &State<'_, AppState>) -> Result<String, String> {
+    let guard = state.0.lock().await;
+    Ok(guard
+        .as_ref()
+        .ok_or("Not connected to a cluster")?
+        .info
+        .context
+        .clone())
+}
+
+#[tauri::command]
+async fn helm_status() -> Result<HelmStatus, String> {
+    Ok(k8s_visual_core::helm::status().await)
+}
+
+#[tauri::command]
+async fn helm_releases(
+    state: State<'_, AppState>,
+    namespace: Option<String>,
+) -> Result<Vec<HelmRelease>, String> {
+    let ctx = app_context(&state).await?;
+    k8s_visual_core::helm::releases(&ctx, namespace.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn helm_release_detail(
+    state: State<'_, AppState>,
+    namespace: String,
+    name: String,
+) -> Result<HelmReleaseDetail, String> {
+    let ctx = app_context(&state).await?;
+    k8s_visual_core::helm::release_detail(&ctx, &namespace, &name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn helm_repos() -> Result<Vec<HelmRepo>, String> {
+    k8s_visual_core::helm::repos()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn helm_search(query: String) -> Result<Vec<HelmChartHit>, String> {
+    k8s_visual_core::helm::search(&query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn helm_show(kind: String, chart: String) -> Result<String, String> {
+    k8s_visual_core::helm::show(&kind, &chart)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn helm_repo_modify(
+    op: String,
+    name: Option<String>,
+    url: Option<String>,
+) -> Result<String, String> {
+    k8s_visual_core::helm::repo_modify(&op, name.as_deref(), url.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn helm_action(
+    state: State<'_, AppState>,
+    op: String,
+    namespace: String,
+    release: String,
+    chart: Option<String>,
+    revision: Option<i64>,
+    values: Option<String>,
+) -> Result<String, String> {
+    let ctx = app_context(&state).await?;
+    k8s_visual_core::helm::action(
+        &ctx,
+        &op,
+        &namespace,
+        &release,
+        chart.as_deref(),
+        revision,
+        values.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -348,6 +454,7 @@ pub fn run() {
             get_nodes,
             get_events,
             get_metrics,
+            detect_prometheus,
             get_yaml,
             get_logs,
             start_log_stream,
@@ -367,6 +474,14 @@ pub fn run() {
             term_resize,
             term_close,
             detect_ai_tools,
+            helm_status,
+            helm_releases,
+            helm_release_detail,
+            helm_repos,
+            helm_search,
+            helm_show,
+            helm_repo_modify,
+            helm_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running K8s Visual");

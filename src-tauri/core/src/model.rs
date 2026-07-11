@@ -78,6 +78,68 @@ pub struct CloudImportOutcome {
     pub context: String,
 }
 
+// --- Helm (releases/charts via the user's own helm binary) -------------------
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmStatus {
+    pub installed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmRelease {
+    pub name: String,
+    pub namespace: String,
+    pub revision: i64,
+    pub updated: String,
+    /// deployed | failed | pending-install | pending-upgrade | pending-rollback | superseded | uninstalled
+    pub status: String,
+    /// "chartname-1.2.3"
+    pub chart: String,
+    pub app_version: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmRevision {
+    pub revision: i64,
+    pub updated: String,
+    pub status: String,
+    pub chart: String,
+    pub app_version: String,
+    pub description: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmReleaseDetail {
+    pub values: String,
+    pub manifest: String,
+    pub notes: String,
+    pub history: Vec<HelmRevision>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmRepo {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmChartHit {
+    pub name: String,
+    pub version: String,
+    pub app_version: String,
+    pub description: String,
+}
+
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeInfo {
@@ -185,6 +247,15 @@ pub struct ContainerInfo {
     pub ports: Vec<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init: Option<bool>,
+    /// Resource requests/limits as written in the spec ("250m", "128Mi").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_request: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_request: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]

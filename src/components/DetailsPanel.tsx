@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { actionsFor, KUBECTL_INTENT, type ActionDescriptor } from "../actions";
+import type { AiToolId } from "../ai";
+import type { ProblemChain } from "../chains";
 import { selectorMatches } from "../graph/build";
 import { GROUP_ACCENT_VAR, HEALTH_LABEL, KIND_INFO } from "../kindInfo";
 import type {
@@ -16,6 +18,7 @@ import { diffLines, formatAge, formatClock, openExternal } from "../utils";
 import { HealthDot, KubectlHint, Kv, RiskBadge } from "./bits";
 import { AiLogo, Icon } from "./icons";
 import { LogViewer, type LogSource } from "./LogViewer";
+import { ProblemChainList } from "./ProblemChains";
 
 type Tab = "overview" | "status" | "events" | "logs" | "yaml" | "actions";
 
@@ -28,11 +31,14 @@ interface Props {
   resource: ResourceSummary;
   management: boolean;
   issues: string[];
+  /** Problem chains this resource participates in (affected or on the path). */
+  chains?: ProblemChain[];
   /** Integrated terminal / AI CLI quick actions (absent in contexts without a terminal). */
   terminal?: {
-    tools: { id: "codex" | "claude" | "gemini"; name: string; installed: boolean }[] | null;
+    tools: { id: AiToolId; name: string; installed: boolean }[] | null;
+    assistant?(): void;
     open(): void;
-    ask(tool: "codex" | "claude" | "gemini", resource: ResourceSummary, issues: string[]): void;
+    ask(tool: AiToolId, resource: ResourceSummary, issues: string[]): void;
     copySummary(resource: ResourceSummary, issues: string[]): void;
   };
   onSelectResource(uid: string): void;
@@ -106,7 +112,7 @@ export function DetailsPanel(props: Props) {
 
 // --- Overview ---------------------------------------------------------------
 
-function OverviewTab({ resource: r, snapshot, issues, onSelectResource }: Props) {
+function OverviewTab({ resource: r, snapshot, issues, chains, onSelectResource }: Props) {
   const meta = KIND_INFO[r.kind];
   const isGhost = r.uid.startsWith("missing:");
   const labels = Object.entries(r.labels);
@@ -151,6 +157,13 @@ function OverviewTab({ resource: r, snapshot, issues, onSelectResource }: Props)
             <p key={i}>⚠ {issue}</p>
           ))}
         </div>
+      )}
+
+      {chains && chains.length > 0 && (
+        <>
+          <h3>Problem chain</h3>
+          <ProblemChainList chains={chains} compact onSelectResource={onSelectResource} />
+        </>
       )}
 
       {isGhost && (
@@ -625,10 +638,19 @@ function TerminalAiBox({ resource: r, issues, terminal }: Props) {
         values) into the AI CLI for review - nothing is sent until you press Enter.
       </p>
       <div className="log-toolbar">
+        {terminal.assistant && (
+          <button
+            className="chip on"
+            title="Explain this resource with the built-in assistant (runs locally, free)"
+            onClick={() => terminal.assistant!()}
+          >
+            Explain (built-in)
+          </button>
+        )}
         <button className="chip" onClick={() => terminal.open()}>
           Open terminal here
         </button>
-        {(terminal.tools ?? []).map((tool) => (
+        {(terminal.tools ?? []).filter((t) => t.id !== "ollama").map((tool) => (
           <button
             key={tool.id}
             className="chip"

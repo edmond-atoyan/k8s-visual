@@ -110,7 +110,22 @@ fn container_info(spec: Option<&Container>, cs: &ContainerStatus, init: bool) ->
             .map(|p| p.container_port)
             .collect(),
         init: if init { Some(true) } else { None },
+        cpu_request: quantity(spec, false, "cpu"),
+        memory_request: quantity(spec, false, "memory"),
+        cpu_limit: quantity(spec, true, "cpu"),
+        memory_limit: quantity(spec, true, "memory"),
     }
+}
+
+/// A container's requested/limited quantity as written in the spec.
+fn quantity(spec: Option<&Container>, limit: bool, key: &str) -> Option<String> {
+    let resources = spec?.resources.as_ref()?;
+    let map = if limit {
+        resources.limits.as_ref()?
+    } else {
+        resources.requests.as_ref()?
+    };
+    map.get(key).map(|q| q.0.clone())
 }
 
 pub fn pod_summary(pod: &Pod) -> ResourceSummary {

@@ -1,0 +1,343 @@
+//! Helm integration: releases, charts, repos, and gated write actions - all
+//! by shelling out to the user's own `helm` binary (same pattern and safety
+//! rules as [`crate::cloud`]). Every command pins `--kube-context` to the
+//! app's connection, so the terminal's current-context is never assumed or
+//! switched. Mutating operations exist only behind the frontend's
+//! management-mode confirmation flow.
+
+use std::process::Stdio;
+use std::time::Duration;
+
+use serde::Deserialize;
+
+use crate::cloud::augmented_path;
+use crate::model::{
+    HelmChartHit, HelmRelease, HelmReleaseDetail, HelmRepo, HelmRevision, HelmStatus,
+};
+use crate::{Error, Result};
+
+const LIST_TIMEOUT: u64 = 60;
+const ACTION_TIMEOUT: u64 = 300;
+
+async fn run(args: &[&str], stdin: Option<&str>, timeout_secs: u64) -> Result<String> {
+    let mut cmd = tokio::process::Command::new("helm");
+    cmd.args(args)
+        .env("PATH", augmented_path())
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let fut = async {
+        let mut child = cmd.spawn()?;
+        if let (Some(data), Some(mut pipe)) = (stdin, child.stdin.take()) {
+            use tokio::io::AsyncWriteExt;
+            pipe.write_all(data.as_bytes()).await?;
+            drop(pipe);
+        }
+        child.wait_with_output().await
+    };
+
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), fut).await {
+        Err(_) => Err(Error::Invalid(
+            "`helm` timed out - check cluster reachability and try again.".into(),
+        )),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Err(Error::Invalid(
+            "Helm is not installed. Get it from https://helm.sh/docs/intro/install/ and retry."
+                .into(),
+        )),
+        Ok(Err(e)) => Err(Error::Invalid(format!("could not run `helm`: {e}"))),
+        Ok(Ok(out)) => {
+            if out.status.success() {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            } else {
+                let mut msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if msg.is_empty() {
+                    msg = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                }
+                msg.truncate(600);
+                Err(Error::Invalid(format!("helm: {msg}")))
+            }
+        }
+    }
+}
+
+/// Never fails: reports installation state for the UI.
+pub async fn status() -> HelmStatus {
+    match run(&["version", "--template", "{{.Version}}"], None, 20).await {
+        Ok(v) => HelmStatus {
+            installed: true,
+            version: Some(v.trim().to_string()),
+            detail: None,
+        },
+        Err(e) => HelmStatus {
+            installed: false,
+            version: None,
+            detail: Some(e.to_string()),
+        },
+    }
+}
+
+#[derive(Deserialize)]
+struct RawRelease {
+    name: String,
+    namespace: String,
+    revision: String,
+    updated: String,
+    status: String,
+    chart: String,
+    app_version: String,
+}
+
+pub async fn releases(context: &str, namespace: Option<&str>) -> Result<Vec<HelmRelease>> {
+    let mut args = vec!["list", "--kube-context", context, "-o", "json", "--all"];
+    match namespace {
+        Some(ns) => args.extend(["-n", ns]),
+        None => args.push("-A"),
+    }
+    let out = run(&args, None, LIST_TIMEOUT).await?;
+    let raw: Vec<RawRelease> = serde_json::from_str(&out)
+        .map_err(|e| Error::Invalid(format!("unexpected `helm list` output: {e}")))?;
+    Ok(raw
+        .into_iter()
+        .map(|r| HelmRelease {
+            name: r.name,
+            namespace: r.namespace,
+            revision: r.revision.parse().unwrap_or(0),
+            updated: r.updated,
+            status: r.status,
+            chart: r.chart,
+            app_version: r.app_version,
+        })
+        .collect())
+}
+
+#[derive(Deserialize)]
+struct RawRevision {
+    revision: i64,
+    updated: String,
+    status: String,
+    chart: String,
+    app_version: String,
+    description: String,
+}
+
+pub async fn release_detail(
+    context: &str,
+    namespace: &str,
+    name: &str,
+) -> Result<HelmReleaseDetail> {
+    let base = |sub: &'static str| {
+        let ctx = context.to_string();
+        let ns = namespace.to_string();
+        let n = name.to_string();
+        async move {
+            run(
+                &["get", sub, &n, "--kube-context", &ctx, "-n", &ns],
+                None,
+                LIST_TIMEOUT,
+            )
+            .await
+        }
+    };
+    // Values as the user supplied them (not computed) - what `helm get values` shows.
+    let values = run(
+        &[
+            "get",
+            "values",
+            name,
+            "--kube-context",
+            context,
+            "-n",
+            namespace,
+            "-o",
+            "yaml",
+        ],
+        None,
+        LIST_TIMEOUT,
+    )
+    .await
+    .unwrap_or_else(|e| format!("# {e}"));
+    let manifest = base("manifest").await.unwrap_or_else(|e| format!("# {e}"));
+    let notes = base("notes").await.unwrap_or_default();
+    let history_raw = run(
+        &[
+            "history",
+            name,
+            "--kube-context",
+            context,
+            "-n",
+            namespace,
+            "-o",
+            "json",
+        ],
+        None,
+        LIST_TIMEOUT,
+    )
+    .await?;
+    let history: Vec<RawRevision> = serde_json::from_str(&history_raw)
+        .map_err(|e| Error::Invalid(format!("unexpected `helm history` output: {e}")))?;
+    Ok(HelmReleaseDetail {
+        values,
+        manifest,
+        notes,
+        history: history
+            .into_iter()
+            .map(|h| HelmRevision {
+                revision: h.revision,
+                updated: h.updated,
+                status: h.status,
+                chart: h.chart,
+                app_version: h.app_version,
+                description: h.description,
+            })
+            .collect(),
+    })
+}
+
+pub async fn repos() -> Result<Vec<HelmRepo>> {
+    #[derive(Deserialize)]
+    struct RawRepo {
+        name: String,
+        url: String,
+    }
+    match run(&["repo", "list", "-o", "json"], None, LIST_TIMEOUT).await {
+        Ok(out) => {
+            let raw: Vec<RawRepo> = serde_json::from_str(&out)
+                .map_err(|e| Error::Invalid(format!("unexpected `helm repo list` output: {e}")))?;
+            Ok(raw
+                .into_iter()
+                .map(|r| HelmRepo {
+                    name: r.name,
+                    url: r.url,
+                })
+                .collect())
+        }
+        // "no repositories to show" exits non-zero - that is an empty list, not an error.
+        Err(Error::Invalid(msg)) if msg.contains("no repositories") => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn search(query: &str) -> Result<Vec<HelmChartHit>> {
+    #[derive(Deserialize)]
+    struct RawHit {
+        name: String,
+        version: String,
+        app_version: String,
+        description: String,
+    }
+    match run(&["search", "repo", query, "-o", "json"], None, LIST_TIMEOUT).await {
+        Ok(out) => {
+            let raw: Vec<RawHit> = serde_json::from_str(&out)
+                .map_err(|e| Error::Invalid(format!("unexpected `helm search` output: {e}")))?;
+            Ok(raw
+                .into_iter()
+                .map(|h| HelmChartHit {
+                    name: h.name,
+                    version: h.version,
+                    app_version: h.app_version,
+                    description: h.description,
+                })
+                .collect())
+        }
+        Err(Error::Invalid(msg)) if msg.contains("no results") => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+/// `helm show values|chart|readme <repo/chart>`.
+pub async fn show(kind: &str, chart: &str) -> Result<String> {
+    if !matches!(kind, "values" | "chart" | "readme") {
+        return Err(Error::Invalid(format!(
+            "unsupported helm show kind: {kind}"
+        )));
+    }
+    run(&["show", kind, chart], None, LIST_TIMEOUT).await
+}
+
+/// Repo management (local helm config; still management-gated in the UI).
+pub async fn repo_modify(op: &str, name: Option<&str>, url: Option<&str>) -> Result<String> {
+    match op {
+        "add" => {
+            let (n, u) = (
+                name.ok_or_else(|| Error::Invalid("repo name required".into()))?,
+                url.ok_or_else(|| Error::Invalid("repo url required".into()))?,
+            );
+            run(&["repo", "add", n, u], None, ACTION_TIMEOUT).await
+        }
+        "remove" => {
+            let n = name.ok_or_else(|| Error::Invalid("repo name required".into()))?;
+            run(&["repo", "remove", n], None, ACTION_TIMEOUT).await
+        }
+        "update" => run(&["repo", "update"], None, ACTION_TIMEOUT).await,
+        _ => Err(Error::Invalid(format!("unsupported repo operation: {op}"))),
+    }
+}
+
+/// Cluster-mutating Helm operations. Reached only through the frontend's
+/// management-mode confirmation flow; `values` (if any) is passed via stdin.
+pub async fn action(
+    context: &str,
+    op: &str,
+    namespace: &str,
+    release: &str,
+    chart: Option<&str>,
+    revision: Option<i64>,
+    values: Option<&str>,
+) -> Result<String> {
+    let rev_string;
+    let mut args: Vec<&str> = match op {
+        "install" => {
+            let c = chart.ok_or_else(|| Error::Invalid("chart required for install".into()))?;
+            vec!["install", release, c]
+        }
+        "upgrade" => {
+            let c = chart.ok_or_else(|| Error::Invalid("chart required for upgrade".into()))?;
+            vec!["upgrade", release, c]
+        }
+        "rollback" => {
+            let r =
+                revision.ok_or_else(|| Error::Invalid("revision required for rollback".into()))?;
+            rev_string = r.to_string();
+            vec!["rollback", release, &rev_string]
+        }
+        "uninstall" => vec!["uninstall", release],
+        _ => return Err(Error::Invalid(format!("unsupported helm operation: {op}"))),
+    };
+    args.extend(["--kube-context", context, "-n", namespace]);
+    let has_values = values.is_some() && matches!(op, "install" | "upgrade");
+    if has_values {
+        args.extend(["-f", "-"]);
+    }
+    run(
+        &args,
+        if has_values { values } else { None },
+        ACTION_TIMEOUT,
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_json_parses() {
+        let json = r#"[{"name":"shop","namespace":"demo","revision":"4","updated":"2026-07-01 10:00:00.0 +0000 UTC","status":"deployed","chart":"shop-1.4.2","app_version":"2.1.0"}]"#;
+        let raw: Vec<RawRelease> = serde_json::from_str(json).unwrap();
+        assert_eq!(raw[0].revision, "4");
+        assert_eq!(raw[0].chart, "shop-1.4.2");
+    }
+
+    #[test]
+    fn history_json_parses() {
+        let json = r#"[{"revision":3,"updated":"2026-06-01T10:00:00Z","status":"superseded","chart":"shop-1.4.1","app_version":"2.0.0","description":"Upgrade complete"}]"#;
+        let raw: Vec<RawRevision> = serde_json::from_str(json).unwrap();
+        assert_eq!(raw[0].revision, 3);
+    }
+}

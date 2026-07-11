@@ -25,6 +25,7 @@ interface Props {
   onToggleManagement(): void;
   onToggleTheme(): void;
   onToggleTerminal?(): void;
+  onToggleAssistant?(): void;
   onRefresh(): void;
 }
 
@@ -45,6 +46,7 @@ export function TopBar({
   onToggleManagement,
   onToggleTheme,
   onToggleTerminal,
+  onToggleAssistant,
   onRefresh,
 }: Props) {
   const [about, setAbout] = useState(false);
@@ -85,6 +87,16 @@ export function TopBar({
         </button>
       )}
 
+      {cluster && onToggleAssistant && (
+        <button
+          className="icon-btn"
+          onClick={onToggleAssistant}
+          title="Assistant - explain problems, summarize health (runs locally)"
+          aria-label="Open assistant"
+        >
+          <Icon name="sparkle" />
+        </button>
+      )}
       {cluster && onToggleTerminal && (
         <button
           className="icon-btn"

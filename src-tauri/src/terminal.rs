@@ -184,6 +184,7 @@ pub async fn detect_ai_tools() -> Vec<AiToolStatus> {
         ("codex", "Codex CLI"),
         ("claude", "Claude Code"),
         ("gemini", "Gemini CLI"),
+        ("ollama", "Ollama"),
     ];
     let mut out = Vec::new();
     for (bin, name) in probes {

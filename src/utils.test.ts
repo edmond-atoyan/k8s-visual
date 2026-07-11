@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cloudTag, diffLines, formatAge, formatBytes, formatCpu } from "./utils";
+import { cloudTag, contextFlavor, diffLines, formatAge, formatBytes, formatCpu, providerBadge } from "./utils";
 
 describe("diffLines", () => {
   it("reports identical text as all-same", () => {
@@ -36,6 +36,23 @@ describe("cloudTag", () => {
   it("returns null for local clusters", () => {
     expect(cloudTag("default", "https://127.0.0.1:6443")).toBeNull();
     expect(cloudTag("minikube", "")).toBeNull();
+  });
+});
+
+describe("providerBadge", () => {
+  it("recognizes local cluster flavors from context names", () => {
+    expect(contextFlavor("minikube")).toBe("minikube");
+    expect(contextFlavor("kind-dev")).toBe("kind");
+    expect(contextFlavor("k3d-test")).toBe("k3d");
+    expect(contextFlavor("docker-desktop")).toBe("docker");
+    expect(contextFlavor("microk8s-cluster")).toBe("microk8s");
+    expect(contextFlavor("default")).toBeNull();
+  });
+
+  it("prefers cloud detection, falls back to flavor, then local", () => {
+    expect(providerBadge("arn:aws:eks:eu-west-1:1:cluster/x").text).toBe("EKS");
+    expect(providerBadge("kind-dev").text).toBe("kind");
+    expect(providerBadge("default").text).toBe("local");
   });
 });
 

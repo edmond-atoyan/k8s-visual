@@ -13,6 +13,7 @@ pub mod actions;
 pub mod cloud;
 pub mod events;
 pub mod exec;
+pub mod helm;
 pub mod logs;
 pub mod metrics;
 pub mod model;
@@ -282,6 +283,31 @@ impl Bridge {
 
     pub async fn logs(&self, query: &LogQuery) -> Result<String> {
         logs::fetch(&self.client, query).await
+    }
+
+    /// Best-effort Prometheus discovery: a Service named like prometheus
+    /// serving port 9090, anywhere in the cluster. Returns "ns/name" or None
+    /// (missing RBAC or no Prometheus both mean None - the Metrics API path
+    /// never depends on this).
+    pub async fn detect_prometheus(&self) -> Option<String> {
+        let api: Api<Service> = Api::all(self.client.clone());
+        let list = api.list(&ListParams::default()).await.ok()?;
+        list.items.iter().find_map(|svc| {
+            let name = svc.metadata.name.clone()?;
+            let ns = svc.metadata.namespace.clone()?;
+            let lower = name.to_lowercase();
+            let looks_like = lower.contains("prometheus")
+                && !lower.contains("exporter")
+                && !lower.contains("alertmanager")
+                && !lower.contains("operator")
+                && !lower.contains("adapter");
+            let serves_9090 = svc
+                .spec
+                .as_ref()
+                .and_then(|sp| sp.ports.as_ref())
+                .is_some_and(|ports| ports.iter().any(|p| p.port == 9090));
+            (looks_like && serves_9090).then(|| format!("{ns}/{name}"))
+        })
     }
 
     pub async fn metrics(&self, namespace: &str) -> Result<MetricsSnapshot> {
