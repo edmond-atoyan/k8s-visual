@@ -65,6 +65,14 @@ pub async fn get(client: &Client, kind: &str, namespace: &str, name: &str) -> Re
                 );
             }
         }
+        // kubectl's last-applied annotation embeds the full object - including
+        // secret values - so it gets the same masking as .data.
+        if let Some(annotations) = obj.metadata.annotations.as_mut() {
+            if let Some(v) = annotations.get_mut("kubectl.kubernetes.io/last-applied-configuration")
+            {
+                *v = "«hidden - may contain secret values»".into();
+            }
+        }
     }
     serde_yaml::to_string(&obj).map_err(|e| Error::Invalid(format!("YAML encode failed: {e}")))
 }
@@ -138,7 +146,9 @@ pub async fn apply(
         } else {
             Api::all_with(client.clone(), &ar)
         };
-        let mut params = PatchParams::apply("k8s-visual").force();
+        // No .force(): a field-manager conflict is surfaced to the user
+        // instead of silently taking ownership of another manager's fields.
+        let mut params = PatchParams::apply("k8s-visual");
         if dry_run {
             params = params.dry_run();
         }

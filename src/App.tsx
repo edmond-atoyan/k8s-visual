@@ -1,6 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ActionDescriptor } from "./actions";
-import { actionsFor } from "./actions";
+import { actionsFor, setKubectlContext } from "./actions";
 import { askAiCommand, buildResourceSummary, detectAiTools, type AiToolId, type AiToolStatus } from "./ai";
 import { ActionModal } from "./components/ActionModal";
 import { DetailsPanel } from "./components/DetailsPanel";
@@ -172,6 +173,8 @@ export default function App() {
       setOverview(first);
       setSwitching(false);
       setManagement(false); // every session starts read-only
+      // Every kubectl hint from now on carries --context for this cluster.
+      setKubectlContext(prov.mode === "demo" ? null : info.context);
       metricsHistory.current = newMetricsHistory();
       const prefKey = prov.mode === "demo" ? "demo" : info.context;
       clusterPrefs.setLastContext(prefKey);
@@ -202,6 +205,14 @@ export default function App() {
   // callback must not capture a stale provider).
   const providerRef = useRef<ClusterProvider | null>(null);
   providerRef.current = provider;
+
+  // Mirror the management toggle into the backend: mutating IPC commands
+  // check it there, so read-only mode never depends on React state alone.
+  useEffect(() => {
+    if (provider && provider.mode !== "demo" && inTauri()) {
+      void invoke("set_management", { on: management }).catch(() => {});
+    }
+  }, [management, provider]);
 
   /** Change namespace and remember it for this cluster. */
   const changeNamespace = (ns: string) => {
@@ -384,6 +395,11 @@ export default function App() {
         <div className="center-col">
         <main className="main">
           {error && <div className="error-banner">{error}</div>}
+          {snapshot && (snapshot.warnings?.length ?? 0) > 0 && NAMESPACED_VIEWS.includes(view) && (
+            <div className="error-banner">
+              Partial view - some kinds could not be listed. {snapshot.warnings!.join(" · ")}
+            </div>
+          )}
 
           {view === "overview" && overview && (
             <OverviewView

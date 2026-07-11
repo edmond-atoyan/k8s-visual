@@ -411,7 +411,14 @@ function YamlTab({ provider, resource: r, management }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [edited, setEdited] = useState("");
-  const [preview, setPreview] = useState<{ diff: ReturnType<typeof diffLines>; dryRun: string } | null>(null);
+  // A preview is only valid for the exact text it dry-ran; `ok` and `forText`
+  // gate the Apply button so a failed or stale dry-run can never be applied.
+  const [preview, setPreview] = useState<{
+    diff: ReturnType<typeof diffLines>;
+    dryRun: string;
+    ok: boolean;
+    forText: string;
+  } | null>(null);
   const [applyMsg, setApplyMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -433,7 +440,9 @@ function YamlTab({ provider, resource: r, management }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [provider, r]);
+    // Depend on the resource identity, not the object: polling replaces the
+    // object every refresh and must not wipe an in-progress edit.
+  }, [provider, r.uid, r.kind, r.namespace, r.name]);
 
   if (error) return <div className="error-banner">{error}</div>;
   if (yaml === null) return <p className="about">Loading YAML…</p>;
@@ -446,15 +455,20 @@ function YamlTab({ provider, resource: r, management }: Props) {
       setPreview({
         diff: diffLines(yaml, edited),
         dryRun: dry.ok ? `Server dry-run OK: ${dry.results.join("; ")}` : `Server dry-run failed: ${dry.error}`,
+        ok: dry.ok,
+        forText: edited,
       });
     } catch (e) {
-      setPreview({ diff: diffLines(yaml, edited), dryRun: `Dry-run failed: ${String(e)}` });
+      setPreview({ diff: diffLines(yaml, edited), dryRun: `Dry-run failed: ${String(e)}`, ok: false, forText: edited });
     } finally {
       setBusy(false);
     }
   };
 
+  const canApply = management && preview?.ok === true && preview.forText === edited;
+
   const apply = async () => {
+    if (!canApply) return;
     setBusy(true);
     try {
       const res = await provider.applyYaml(edited, false, r.namespace);
@@ -527,9 +541,23 @@ function YamlTab({ provider, resource: r, management }: Props) {
               ),
             )}
           </pre>
-          <p className="about">{preview.dryRun}</p>
+          <p className="about">
+            {preview.dryRun}
+            {preview.ok && preview.forText !== edited && " (text changed since - run the preview again)"}
+          </p>
           <div className="modal-actions">
-            <button className="btn primary risk-high" disabled={busy} onClick={() => void apply()}>
+            <button
+              className="btn primary risk-high"
+              disabled={busy || !canApply}
+              title={
+                canApply
+                  ? "Apply to the cluster"
+                  : !management
+                    ? "Enable management mode first"
+                    : "A successful dry-run of exactly this text is required first"
+              }
+              onClick={() => void apply()}
+            >
               Apply to cluster (high risk)
             </button>
           </div>

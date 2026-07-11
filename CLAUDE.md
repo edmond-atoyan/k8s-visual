@@ -6,11 +6,18 @@ common kubectl workflows (get/describe/logs/events/top/scale/rollout/delete/
 apply/exec/port-forward) into visual, safe operations. Includes a built-in
 educational demo cluster.
 
-Safety model: **read-only by default**. Management mode is an explicit
-toggle; every mutating action goes through one confirmation flow (target
-context → current state → intended change → kubectl intent → risk level →
-confirm). Secret values are never fetched implicitly, never stored, and are
-masked in YAML; reveal is a separate confirmed call.
+Safety model: **read-only by default**, enforced in BOTH layers: the React
+UI gates buttons, and the Rust backend mirrors the toggle (`set_management`
+IPC) and refuses mutating commands (actions, non-dry-run apply, exec, helm
+writes) while it is off. Every mutating action goes through one confirmation
+flow (target context → current state → intended change → kubectl intent →
+risk level → confirm). Secret values are never fetched implicitly, never
+stored, and are masked in YAML (including the kubectl last-applied
+annotation, which embeds them); reveal is a separate confirmed call. Every
+kubectl string the app shows carries `--context` for the connected cluster
+(`actions.ts setKubectlContext`), and the integrated terminal gets a
+KUBECONFIG copy pinned to that context (`core write_pinned_kubeconfig`) so
+shell tools can never silently target the kubeconfig current-context.
 
 ## Commands
 
@@ -30,11 +37,17 @@ masked in YAML; reveal is a separate confirmed call.
   `summaries` (per-kind mappers), `events`, `logs` (fetch + follow stream),
   `metrics` (metrics.k8s.io; honest "unavailable" fallback), `rbac`
   (SelfSubjectAccessReview), `yaml` (get with Secret masking + server-side
-  apply), `actions` (with `yaml::apply`, the ONLY cluster-mutating code),
-  `exec` (one-shot, non-interactive), `portforward` (local tunnels).
-  Kept free of Tauri deps on purpose.
+  apply, no force-conflicts), `actions` (with `yaml::apply` and `helm` write
+  ops, the only cluster-mutating code), `exec` (one-shot, non-interactive;
+  stdout/stderr drained concurrently - sequential drains deadlock),
+  `portforward` (local tunnels; per-connection tasks tracked so Stop and
+  disconnect kill established connections too). Kept free of Tauri deps on
+  purpose. `Bridge::snapshot` returns PARTIAL data with per-kind `warnings`
+  on RBAC denials instead of failing whole.
 - `src-tauri/src/lib.rs` — thin Tauri IPC commands; log streaming uses
-  `tauri::ipc::Channel`.
+  `tauri::ipc::Channel`. Holds the backend management flag (see safety
+  model); `with_bridge!` clones the Bridge out of the mutex so no network
+  await blocks other commands; `disconnect` aborts log streams and tunnels.
 - `src-tauri/core/src/cloud.rs` — managed-cloud connect (EKS/AKS/GKE). Its
   ONLY job is credential discovery/import by shelling out to the user's own
   `aws`/`az`/`gcloud` CLI (which writes the kubeconfig entry itself); the app
@@ -99,7 +112,10 @@ masked in YAML; reveal is a separate confirmed call.
   kubeconfig current-context); `views/HelmView.tsx` has Releases/Charts tabs,
   release detail (values/manifest/notes/history/resources via meta.helm.sh
   annotations), repo management, and write actions - all management-gated
-  behind a confirmation dialog that shows the full helm command.
+  behind a confirmation dialog that shows the full helm command (and the
+  backend management flag). Secret documents in `helm get manifest` output
+  are masked in Rust; release values render only after an explicit "Show
+  values" click (they commonly contain credentials).
 - Wire types are duplicated by design and must stay in sync:
   `src-tauri/core/src/model.rs` (serde camelCase) ↔ `src/types.ts`.
 

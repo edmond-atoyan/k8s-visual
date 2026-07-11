@@ -54,6 +54,30 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Truncate on a char boundary - `String::truncate` at a byte index panics
+/// mid-UTF-8, and CLI error output is not guaranteed to be ASCII.
+pub(crate) fn truncate_utf8(msg: &mut String, max: usize) {
+    if msg.len() > max {
+        let mut end = max;
+        while !msg.is_char_boundary(end) {
+            end -= 1;
+        }
+        msg.truncate(end);
+    }
+}
+
+/// Short, honest reason for a failed per-kind list: an RBAC denial reads as
+/// "forbidden", not as a wall of API error text.
+fn short_list_error(e: &kube::Error) -> String {
+    match e {
+        kube::Error::Api(ae) if ae.code == 403 => {
+            "forbidden - your role cannot list this kind here".to_string()
+        }
+        kube::Error::Api(ae) => format!("{} ({})", ae.reason, ae.code),
+        other => other.to_string(),
+    }
+}
+
 /// List the contexts available in the user's kubeconfig without connecting.
 pub fn list_contexts() -> Result<Vec<ContextInfo>> {
     let kubeconfig = Kubeconfig::read().map_err(|e| Error::Kubeconfig(e.to_string()))?;
@@ -73,7 +97,54 @@ pub fn list_contexts() -> Result<Vec<ContextInfo>> {
         .collect())
 }
 
-/// A live connection to one cluster.
+/// Write a copy of the user's kubeconfig with `current-context` pinned to
+/// the given context, into a user-private runtime directory (0600). kubectl
+/// and helm have no environment variable for the context itself, so pointing
+/// `KUBECONFIG` at a pinned copy is the only way to make shell tools agree
+/// with the cluster the app is connected to.
+pub fn write_pinned_kubeconfig(context: &str) -> Result<std::path::PathBuf> {
+    let mut kubeconfig = Kubeconfig::read().map_err(|e| Error::Kubeconfig(e.to_string()))?;
+    if !kubeconfig.contexts.iter().any(|c| c.name == context) {
+        return Err(Error::Invalid(format!(
+            "context \"{context}\" not found in kubeconfig"
+        )));
+    }
+    kubeconfig.current_context = Some(context.to_string());
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("k8s-visual");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Error::Invalid(format!("cannot create {}: {e}", dir.display())))?;
+    let slug: String = context
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(80)
+        .collect();
+    let path = dir.join(format!("kubeconfig-{slug}.yaml"));
+    let yaml = serde_yaml::to_string(&kubeconfig)
+        .map_err(|e| Error::Invalid(format!("could not encode kubeconfig: {e}")))?;
+    std::fs::write(&path, yaml)
+        .map_err(|e| Error::Invalid(format!("cannot write {}: {e}", path.display())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(path)
+}
+
+/// A live connection to one cluster. Cloning is cheap (the kube client is
+/// reference-counted) - callers clone it out of shared state instead of
+/// holding a lock across network awaits.
+#[derive(Clone)]
 pub struct Bridge {
     pub(crate) client: Client,
     pub info: ClusterInfo,
@@ -174,6 +245,8 @@ impl Bridge {
     }
 
     /// Everything the graph needs for one namespace, in a single call.
+    /// A kind whose list fails (usually RBAC) is skipped and reported in
+    /// `warnings` - a partial snapshot beats an all-or-nothing error.
     pub async fn snapshot(&self, namespace: &str) -> Result<NamespaceSnapshot> {
         let lp = ListParams::default();
         let c = &self.client;
@@ -183,22 +256,22 @@ impl Bridge {
             };
         }
         // Fetch all resource kinds concurrently.
-        let (pods, deployments, replicasets, statefulsets, daemonsets, jobs) = tokio::try_join!(
+        let (pods, deployments, replicasets, statefulsets, daemonsets, jobs) = tokio::join!(
             list!(Pod),
             list!(Deployment),
             list!(ReplicaSet),
             list!(StatefulSet),
             list!(DaemonSet),
             list!(Job),
-        )?;
-        let (cronjobs, services, ingresses, configmaps, secrets, pvcs) = tokio::try_join!(
+        );
+        let (cronjobs, services, ingresses, configmaps, secrets, pvcs) = tokio::join!(
             list!(CronJob),
             list!(Service),
             list!(Ingress),
             list!(ConfigMap),
             list!(Secret),
             list!(PersistentVolumeClaim),
-        )?;
+        );
         // HPA / NetworkPolicy may not exist on very old clusters; treat as empty.
         let hpas = Api::<HorizontalPodAutoscaler>::namespaced(c.clone(), namespace)
             .list(&lp)
@@ -212,28 +285,49 @@ impl Bridge {
             .unwrap_or_default();
 
         let mut resources: Vec<ResourceSummary> = Vec::new();
-        resources.extend(pods.items.iter().map(pod_summary));
-        resources.extend(deployments.items.iter().map(deployment_summary));
-        resources.extend(replicasets.items.iter().map(replicaset_summary));
-        resources.extend(statefulsets.items.iter().map(statefulset_summary));
-        resources.extend(daemonsets.items.iter().map(daemonset_summary));
-        resources.extend(jobs.items.iter().map(job_summary));
-        resources.extend(cronjobs.items.iter().map(cronjob_summary));
-        resources.extend(services.items.iter().map(service_summary));
-        resources.extend(ingresses.items.iter().map(ingress_summary));
-        resources.extend(configmaps.items.iter().map(configmap_summary));
-        resources.extend(secrets.items.iter().map(secret_summary));
-        resources.extend(pvcs.items.iter().map(pvc_summary));
+        let mut warnings: Vec<String> = Vec::new();
+        // Unwrap one kind's list result: extend resources or record why the
+        // kind is missing, so "forbidden" never silently looks like "empty".
+        macro_rules! take {
+            ($res:expr, $kind:literal, $mapper:expr) => {
+                match $res {
+                    Ok(list) => {
+                        resources.extend(list.items.iter().map($mapper));
+                        Some(list)
+                    }
+                    Err(e) => {
+                        warnings.push(format!("{}: {}", $kind, short_list_error(&e)));
+                        None
+                    }
+                }
+            };
+        }
+        take!(pods, "Pods", pod_summary);
+        take!(deployments, "Deployments", deployment_summary);
+        take!(replicasets, "ReplicaSets", replicaset_summary);
+        take!(statefulsets, "StatefulSets", statefulset_summary);
+        take!(daemonsets, "DaemonSets", daemonset_summary);
+        take!(jobs, "Jobs", job_summary);
+        take!(cronjobs, "CronJobs", cronjob_summary);
+        take!(services, "Services", service_summary);
+        take!(ingresses, "Ingresses", ingress_summary);
+        take!(configmaps, "ConfigMaps", configmap_summary);
+        take!(secrets, "Secrets", secret_summary);
+        let pvcs = take!(pvcs, "PersistentVolumeClaims", pvc_summary);
         resources.extend(hpas.iter().map(hpa_summary));
         resources.extend(netpols.iter().map(networkpolicy_summary));
 
         // PVs and StorageClasses are cluster-scoped; include the ones this
         // namespace's claims actually bind to, so the storage chain is visible.
         let bound_pvs: Vec<String> = pvcs
-            .items
-            .iter()
-            .filter_map(|p| p.spec.as_ref().and_then(|s| s.volume_name.clone()))
-            .collect();
+            .as_ref()
+            .map(|list| {
+                list.items
+                    .iter()
+                    .filter_map(|p| p.spec.as_ref().and_then(|s| s.volume_name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
         if !bound_pvs.is_empty() {
             if let Ok(pvs) = Api::<PersistentVolume>::all(c.clone()).list(&lp).await {
                 let used: Vec<&PersistentVolume> = pvs
@@ -260,6 +354,7 @@ impl Bridge {
         Ok(NamespaceSnapshot {
             namespace: namespace.to_string(),
             resources,
+            warnings,
         })
     }
 

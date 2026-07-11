@@ -309,6 +309,10 @@ pub struct ResourceSummary {
 pub struct NamespaceSnapshot {
     pub namespace: String,
     pub resources: Vec<ResourceSummary>,
+    /// Per-kind list failures (e.g. RBAC denials). A partial snapshot with an
+    /// honest warning beats an all-or-nothing error for least-privilege users.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 // --- events ------------------------------------------------------------------

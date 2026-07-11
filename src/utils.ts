@@ -59,11 +59,41 @@ export type DiffLine = { type: "same" | "add" | "del"; text: string };
 
 /**
  * Minimal line diff (LCS) for YAML previews. Fine for config-sized inputs;
- * not meant for huge files.
+ * inputs too large for the quadratic table fall back to a coarse
+ * common-prefix/suffix diff instead of freezing the UI.
  */
 export function diffLines(before: string, after: string): DiffLine[] {
   const a = before.split("\n");
   const b = after.split("\n");
+
+  // Trim the (usually large) identical prefix and suffix first.
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const head: DiffLine[] = a.slice(0, start).map((text) => ({ type: "same", text }));
+  const tail: DiffLine[] = a.slice(endA).map((text) => ({ type: "same", text }));
+  const midA = a.slice(start, endA);
+  const midB = b.slice(start, endB);
+
+  // The LCS table is O(n*m); beyond this budget show the changed region as a
+  // plain replacement rather than blocking the webview for seconds.
+  if (midA.length * midB.length > 1_000_000) {
+    return [
+      ...head,
+      ...midA.map((text): DiffLine => ({ type: "del", text })),
+      ...midB.map((text): DiffLine => ({ type: "add", text })),
+      ...tail,
+    ];
+  }
+  return [...head, ...lcsDiff(midA, midB), ...tail];
+}
+
+function lcsDiff(a: string[], b: string[]): DiffLine[] {
   const n = a.length;
   const m = b.length;
   // LCS table (n and m are small for YAML documents).

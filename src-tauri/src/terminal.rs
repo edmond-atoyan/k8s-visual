@@ -35,8 +35,9 @@ impl TerminalManager {
     }
 
     /// Spawn the user's shell in a new PTY. `env` carries non-secret context
-    /// (K8S_VISUAL_CONTEXT / K8S_VISUAL_NAMESPACE); the child otherwise
-    /// inherits the session environment.
+    /// (K8S_VISUAL_CONTEXT / K8S_VISUAL_NAMESPACE, plus a KUBECONFIG pinned
+    /// to the app's connection when one exists - see `term_open` in lib.rs);
+    /// the child otherwise inherits the session environment.
     pub fn open(
         &self,
         cols: u16,

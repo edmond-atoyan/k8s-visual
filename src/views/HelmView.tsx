@@ -56,6 +56,9 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
   const [doc, setDoc] = useState<{ title: string; text: string } | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [repoForm, setRepoForm] = useState({ name: "", url: "" });
+  // Release values regularly contain credentials - never render them without
+  // an explicit click (same idea as the Secret reveal flow).
+  const [valuesShown, setValuesShown] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,12 +88,17 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
 
   useEffect(() => {
     if (!selected) return;
+    let cancelled = false;
     setDetail(null);
     setDetailTab("overview");
+    setValuesShown(false);
     provider
       .helmReleaseDetail(selected.namespace, selected.name)
-      .then(setDetail)
-      .catch((e) => setError(String(e)));
+      .then((d) => !cancelled && setDetail(d))
+      .catch((e) => !cancelled && setError(String(e)));
+    return () => {
+      cancelled = true;
+    };
   }, [provider, selected]);
 
   useEffect(() => {
@@ -357,12 +365,27 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
 
           {detailTab === "values" && (
             <>
-              <pre className="yaml-pane">{detail ? detail.values || "# no user-supplied values" : "loading…"}</pre>
+              {valuesShown ? (
+                <pre className="yaml-pane">{detail ? detail.values || "# no user-supplied values" : "loading…"}</pre>
+              ) : (
+                <div className="issue-box">
+                  <p>
+                    Release values often contain passwords, tokens, and other credentials, so they are not shown
+                    automatically. Only view them if you are authorized to see this release's configuration.
+                  </p>
+                  <div className="modal-actions">
+                    <button className="btn primary risk-high" onClick={() => setValuesShown(true)}>
+                      Show values
+                    </button>
+                  </div>
+                </div>
+              )}
               <KubectlHint label="helm equivalent" command={`helm get values ${selected.name} -n ${selected.namespace}`} />
             </>
           )}
           {detailTab === "manifest" && (
             <>
+              <p className="about">Secret values inside the manifest are masked - key names stay visible.</p>
               <pre className="yaml-pane">{detail ? detail.manifest : "loading…"}</pre>
               <KubectlHint label="helm equivalent" command={`helm get manifest ${selected.name} -n ${selected.namespace}`} />
             </>

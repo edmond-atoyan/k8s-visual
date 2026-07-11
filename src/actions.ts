@@ -6,6 +6,28 @@ import type { Action, ResourceSummary } from "./types";
 
 export type Risk = "low" | "medium" | "high" | "danger";
 
+// --- kubectl context pinning -------------------------------------------------
+// Every kubectl string the app shows carries an explicit `--context` for the
+// cluster the app is connected to. Without it, a copied command runs against
+// the kubeconfig current-context - which may be a different cluster than the
+// one the UI confirmed.
+
+let kubectlContext: string | null = null;
+
+/** Set by the app on connect/disconnect. Demo mode passes null (no context). */
+export function setKubectlContext(context: string | null): void {
+  kubectlContext = context;
+}
+
+/** Quote a shell argument only when it needs it, to keep hints readable. */
+function shellArg(s: string): string {
+  return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function ctx(): string {
+  return kubectlContext ? ` --context ${shellArg(kubectlContext)}` : "";
+}
+
 export const RISK_LABEL: Record<Risk, string> = {
   low: "Low risk",
   medium: "Medium risk",
@@ -112,7 +134,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
       ],
       describe: (res, input) =>
         `${res.kind} "${res.name}" changes from ${currentReplicas(res)} to ${input.replicas} desired replica(s). Kubernetes will start or stop Pods to match.`,
-      kubectl: (res, input) => `kubectl scale ${p.short}/${res.name} --replicas=${input.replicas}${ns}`,
+      kubectl: (res, input) => `kubectl scale ${p.short}/${res.name} --replicas=${input.replicas}${ns}${ctx()}`,
       build: (res, input) => ({
         type: "scaleWorkload",
         kind: res.kind,
@@ -133,7 +155,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
       group: p.group,
       describe: (res) =>
         `Every Pod of ${res.kind} "${res.name}" is replaced with a fresh one, one batch at a time (rolling). Brief capacity reduction is possible.`,
-      kubectl: (res) => `kubectl rollout restart ${p.short}/${res.name}${ns}`,
+      kubectl: (res) => `kubectl rollout restart ${p.short}/${res.name}${ns}${ctx()}`,
       build: (res) => ({ type: "restartRollout", kind: res.kind, namespace: res.namespace, name: res.name }),
     });
   }
@@ -148,7 +170,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
       group: p.group,
       describe: (res) =>
         `Deployment "${res.name}" gets the Pod template of its previous revision back (previous image, env, config). A new rollout starts immediately.`,
-      kubectl: (res) => `kubectl rollout undo deployment/${res.name}${ns}`,
+      kubectl: (res) => `kubectl rollout undo deployment/${res.name}${ns}${ctx()}`,
       build: (res) => ({ type: "rollbackDeployment", namespace: res.namespace, name: res.name }),
     });
     const paused = r.details.Rollout === "Paused" || r.status.includes("paused");
@@ -163,7 +185,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
         paused
           ? `Deployment "${res.name}" resumes rolling out template changes.`
           : `Deployment "${res.name}" stops rolling out template changes until resumed. Running Pods keep running.`,
-      kubectl: (res) => `kubectl rollout ${paused ? "resume" : "pause"} deployment/${res.name}${ns}`,
+      kubectl: (res) => `kubectl rollout ${paused ? "resume" : "pause"} deployment/${res.name}${ns}${ctx()}`,
       build: (res) => ({ type: "pauseRollout", namespace: res.namespace, name: res.name, pause: !paused }),
     });
   }
@@ -182,7 +204,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
           ? `CronJob "${res.name}" starts creating Jobs on its schedule (${res.details.Schedule ?? "?"}) again.`
           : `CronJob "${res.name}" stops creating new Jobs until resumed. Running Jobs are not affected.`,
       kubectl: (res) =>
-        `kubectl patch cronjob/${res.name} -p '{"spec":{"suspend":${!suspended}}}'${ns}`,
+        `kubectl patch cronjob/${res.name} -p '{"spec":{"suspend":${!suspended}}}'${ns}${ctx()}`,
       build: (res) => ({ type: "suspendCronJob", namespace: res.namespace, name: res.name, suspend: !suspended }),
     });
     out.push({
@@ -193,7 +215,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
       resource: "jobs",
       group: "batch",
       describe: (res) => `A new Job is created immediately from the template of CronJob "${res.name}", outside its normal schedule.`,
-      kubectl: (res) => `kubectl create job --from=cronjob/${res.name} ${res.name}-manual${ns}`,
+      kubectl: (res) => `kubectl create job --from=cronjob/${res.name} ${res.name}-manual${ns}${ctx()}`,
       build: (res) => ({ type: "triggerCronJob", namespace: res.namespace, name: res.name }),
     });
   }
@@ -210,7 +232,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
         cordoned
           ? `Node "${res.name}" becomes schedulable again - new Pods may be placed on it.`
           : `Node "${res.name}" is marked unschedulable. Running Pods keep running, but no new Pods will be scheduled here until you uncordon. (Draining/evicting is not offered yet.)`,
-      kubectl: (res) => `kubectl ${cordoned ? "uncordon" : "cordon"} ${res.name}`,
+      kubectl: (res) => `kubectl ${cordoned ? "uncordon" : "cordon"} ${res.name}${ctx()}`,
       build: (res) => ({ type: "cordonNode", name: res.name, cordon: !cordoned }),
     });
   }
@@ -227,7 +249,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
       group: p.group,
       confirmName: risk === "danger",
       describe: deleteDescription,
-      kubectl: (res) => `kubectl delete ${p.short}/${res.name}${ns}`,
+      kubectl: (res) => `kubectl delete ${p.short}/${res.name}${ns}${ctx()}`,
       build: (res) => ({ type: "deleteResource", kind: res.kind, namespace: res.namespace, name: res.name }),
     });
   }
@@ -238,14 +260,14 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
 /** kubectl intent strings for the non-catalog operations. */
 export const KUBECTL_INTENT = {
   logs: (ns: string, pod: string, container?: string, opts?: { follow?: boolean; previous?: boolean }) =>
-    `kubectl logs ${pod}${container ? ` -c ${container}` : ""}${opts?.follow ? " -f" : ""}${opts?.previous ? " --previous" : ""} -n ${ns}`,
+    `kubectl logs ${pod}${container ? ` -c ${container}` : ""}${opts?.follow ? " -f" : ""}${opts?.previous ? " --previous" : ""} -n ${ns}${ctx()}`,
   exec: (ns: string, pod: string, container: string | undefined, cmd: string) =>
-    `kubectl exec ${pod}${container ? ` -c ${container}` : ""} -n ${ns} -- ${cmd}`,
+    `kubectl exec ${pod}${container ? ` -c ${container}` : ""} -n ${ns}${ctx()} -- ${cmd}`,
   portForward: (ns: string, kind: string, name: string, local: number, remote: number) =>
-    `kubectl port-forward ${kind === "Service" ? "svc/" : "pod/"}${name} ${local}:${remote} -n ${ns}`,
-  apply: (dryRun: boolean) => `kubectl apply -f - --server-side${dryRun ? " --dry-run=server" : ""}`,
-  top: (ns: string) => `kubectl top pods -n ${ns}`,
-  events: (ns: string) => `kubectl get events -n ${ns} --sort-by=.lastTimestamp`,
-  describe: (ns: string, kind: string, name: string) => `kubectl describe ${kind.toLowerCase()}/${name} -n ${ns}`,
-  getYaml: (ns: string, kind: string, name: string) => `kubectl get ${kind.toLowerCase()}/${name} -n ${ns} -o yaml`,
+    `kubectl port-forward ${kind === "Service" ? "svc/" : "pod/"}${name} ${local}:${remote} -n ${ns}${ctx()}`,
+  apply: (dryRun: boolean) => `kubectl apply -f - --server-side${dryRun ? " --dry-run=server" : ""}${ctx()}`,
+  top: (ns: string) => `kubectl top pods -n ${ns}${ctx()}`,
+  events: (ns: string) => `kubectl get events -n ${ns}${ctx()} --sort-by=.lastTimestamp`,
+  describe: (ns: string, kind: string, name: string) => `kubectl describe ${kind.toLowerCase()}/${name} -n ${ns}${ctx()}`,
+  getYaml: (ns: string, kind: string, name: string) => `kubectl get ${kind.toLowerCase()}/${name} -n ${ns}${ctx()} -o yaml`,
 };

@@ -98,27 +98,40 @@ export function computeMetricsInsights(opts: {
     for (const pod of pods) {
       const usage = podMetrics.get(pod.name);
       if (!usage) continue;
-      for (const c of pod.containers ?? []) {
-        // Memory close to its limit -> OOMKill risk.
-        const limit = c.memoryLimit ? parseMem(c.memoryLimit) : null;
-        if (limit && usage.memoryBytes / limit > 0.85) {
-          out.push({
-            severity: "critical",
-            title: `${pod.name}: memory at ${Math.round((usage.memoryBytes / limit) * 100)}% of its limit`,
-            detail: `Container "${c.name}" is close to its ${c.memoryLimit} limit - the next spike gets it OOM-killed.`,
-            checks: [`kubectl top pod ${pod.name} -n ${ns}`, `kubectl describe pod ${pod.name} -n ${ns} | grep -A3 Limits`],
-          });
-        }
-        // CPU request far above real usage -> wasted reservations.
-        const request = c.cpuRequest ? parseCpu(c.cpuRequest) : null;
-        if (request && request >= 250 && usage.cpuMillis > 0 && request >= usage.cpuMillis * 4) {
-          out.push({
-            severity: "info",
-            title: `${pod.name}: CPU request ${c.cpuRequest} vs ~${usage.cpuMillis}m actually used`,
-            detail: `The reservation is ${Math.round(request / usage.cpuMillis)}x real usage - it blocks scheduling capacity other Pods could use.`,
-            checks: [`kubectl top pod ${pod.name} -n ${ns}`],
-          });
-        }
+      // The Metrics API usage here is per Pod, so it must be compared against
+      // the Pod's summed limits/requests - comparing the Pod total against
+      // each individual container would fabricate findings for multi-container
+      // Pods. Sums are only meaningful when every container declares a value.
+      const cs = pod.containers ?? [];
+      const memLimits = cs.map((c) => (c.memoryLimit ? parseMem(c.memoryLimit) : null));
+      const memLimit =
+        memLimits.length > 0 && memLimits.every((l) => l !== null)
+          ? memLimits.reduce((a, b) => a! + b!, 0)
+          : null;
+      // Memory close to the limit -> OOMKill risk.
+      if (memLimit && usage.memoryBytes / memLimit > 0.85) {
+        const label = cs.length === 1 ? `its ${cs[0].memoryLimit} limit` : `the combined limit of its ${cs.length} containers`;
+        out.push({
+          severity: "critical",
+          title: `${pod.name}: memory at ${Math.round((usage.memoryBytes / memLimit) * 100)}% of its limit`,
+          detail: `The Pod is close to ${label} - the next spike gets a container OOM-killed.`,
+          checks: [`kubectl top pod ${pod.name} -n ${ns}`, `kubectl describe pod ${pod.name} -n ${ns} | grep -A3 Limits`],
+        });
+      }
+      // CPU request far above real usage -> wasted reservations.
+      const cpuRequests = cs.map((c) => (c.cpuRequest ? parseCpu(c.cpuRequest) : null));
+      const cpuRequest =
+        cpuRequests.length > 0 && cpuRequests.every((r) => r !== null)
+          ? cpuRequests.reduce((a, b) => a! + b!, 0)
+          : null;
+      if (cpuRequest && cpuRequest >= 250 && usage.cpuMillis > 0 && cpuRequest >= usage.cpuMillis * 4) {
+        const requested = cs.length === 1 ? cs[0].cpuRequest : `${cpuRequest}m total`;
+        out.push({
+          severity: "info",
+          title: `${pod.name}: CPU request ${requested} vs ~${usage.cpuMillis}m actually used`,
+          detail: `The reservation is ${Math.round(cpuRequest / usage.cpuMillis)}x real usage - it blocks scheduling capacity other Pods could use.`,
+          checks: [`kubectl top pod ${pod.name} -n ${ns}`],
+        });
       }
     }
 

@@ -81,39 +81,64 @@ Three ways in, one Kubernetes model:
 - **Debugging helpers** for CrashLoopBackOff, ImagePullBackOff, Pending pods,
   and Services without endpoints
 
+### Troubleshoot
+- **Problem chains** - warnings are grouped into causal explanations: from
+  the symptom (a Pending Pod) along the real path (Deployment → ReplicaSet →
+  Pod → PVC → StorageClass) to the likely root cause, with the exact kubectl
+  commands that verify each step and the live evidence behind the diagnosis
+- **Built-in assistant** (free, local, no account or API key) - summarizes
+  namespace health and explains the selected resource from live state and
+  problem chains; nothing leaves your machine. Optionally hand off to
+  Claude Code, Codex, Gemini CLI, or Ollama - always with a previewed,
+  sanitized payload
+- **Metrics insights** - requests/limits vs real usage: OOM-kill risk,
+  missing requests, over-reservation, replica outliers, node memory
+  pressure; Pending Pods are explained instead of shown as zero
+- **Helm** - releases, history, notes, and per-release resources with linked
+  problem chains; manifests with Secret values masked, release values behind
+  an explicit reveal; repo management and gated install / upgrade / rollback /
+  uninstall that always show the full helm command
+
 ### Manage - read-only by default
-- **Management mode** is an explicit toggle; every session starts read-only
+- **Management mode** is an explicit toggle; every session starts read-only,
+  and the Rust backend enforces it independently of the UI - mutating
+  commands are refused while it is off
 - Scale, rollout restart, pause/resume, rollback (with rollout history),
   delete, CronJob suspend/trigger, node cordon/uncordon
 - **Every action shows**: the target context, namespace and platform, the
   current state, what will change, a risk level, and the equivalent kubectl
-  command - destructive actions require typing the resource name
+  command (always pinned with `--context`) - destructive actions require
+  typing the resource name
 - **YAML** view for every resource, plus edit → diff → server dry-run → apply,
-  and an Apply YAML view for pasted/opened manifests (server-side apply)
+  and an Apply YAML view for pasted/opened manifests (server-side apply).
+  Applying requires a successful dry-run of exactly the reviewed text, and
+  field-manager conflicts are surfaced instead of force-taken
 - **Port-forwarding** with a tunnel manager, and one-shot **exec** into
   containers
 - **Secrets stay secret**: names and key names only, values require an
   explicit confirmed reveal, are never stored, and are masked in YAML
 - **RBAC-aware**: actions are checked with `SelfSubjectAccessReview`, denied
   operations explain the missing verb and resource, and the Access view shows
-  your whole permission matrix
+  your whole permission matrix. Least-privilege users get partial views with
+  an honest per-kind "forbidden" note instead of a failed screen
 
 ### Terminal & AI (optional, power users)
 - **Integrated terminal** (Ctrl+`) - your real shell in a PTY with tabs,
   GPU-accelerated rendering, and full TUI support (`top`, `htop`, alternate
-  screen, resize). The header always shows the active platform, context,
-  namespace, and app mode; the kubeconfig current-context is never switched
-  behind your back
+  screen, resize). Every session gets a `KUBECONFIG` copy pinned to the
+  cluster the app is connected to, so `kubectl` and `helm` in the shell
+  always target the context shown in the header - your real kubeconfig and
+  its current-context are never touched
 - **Best-effort guard rail**: dangerous kubectl commands (delete namespace /
   PV / PVC / secret, `--force`, drain, apply, edit) are held at Enter - a
   confirmation in management mode, blocked with a hint in read-only mode.
   The shell itself is never restricted; this is a guard, not a sandbox
-- **AI CLI integration** - if [Claude Code](https://claude.com/claude-code)
-  or Codex CLI is installed, open it in the terminal or ask it about the
-  selected resource. Prompts are **sanitized** (identity, status, conditions,
-  diagnostics - never Secret values, annotations, tokens, or kubeconfig
-  contents), **typed into the shell but never auto-executed**, and log
-  excerpts pass through credential redaction first
+- **AI CLI integration** - if [Claude Code](https://claude.com/claude-code),
+  Codex CLI, Gemini CLI, or Ollama is installed, open it in the terminal or
+  ask it about the selected resource. Prompts are **sanitized** (identity,
+  status, conditions, diagnostics - never Secret values, annotations, tokens,
+  or kubeconfig contents), pass through credential redaction, and are
+  **typed into the shell but never auto-executed**
 
 ## Safety model
 
@@ -124,6 +149,13 @@ workflows: preview before apply, clear risk labels, namespace/resource/
 platform context, confirmation for destructive actions, and RBAC-respecting
 access. The goal is not to hide Kubernetes complexity, but to make every
 operation visible before it happens.
+
+Read-only is enforced twice: the UI gates every button, and the Rust backend
+independently refuses mutating commands (actions, non-dry-run apply, exec,
+Helm writes) while management mode is off. Wrong-cluster mistakes are
+designed out: every displayed kubectl command carries `--context`, and the
+integrated terminal runs against a kubeconfig copy pinned to the connected
+cluster.
 
 Privacy follows the same principle:
 
@@ -156,14 +188,14 @@ Download the latest package from the [Releases page](../../releases):
 
 ```sh
 # Debian / Ubuntu (.deb)
-sudo apt install ./K8s.Visual_1.0.0_amd64.deb
+sudo apt install ./K8s.Visual_1.2.0_amd64.deb
 
 # Fedora / openSUSE / RHEL (.rpm)
-sudo dnf install ./K8s.Visual-1.0.0-1.x86_64.rpm
+sudo dnf install ./K8s.Visual-1.2.0-1.x86_64.rpm
 
 # Any distro (portable AppImage)
-chmod +x K8s.Visual_1.0.0_amd64.AppImage
-./K8s.Visual_1.0.0_amd64.AppImage
+chmod +x K8s.Visual_1.2.0_amd64.AppImage
+./K8s.Visual_1.2.0_amd64.AppImage
 ```
 
 No Kubernetes tooling is required to try it - hit **"Explore the demo
@@ -175,17 +207,17 @@ cluster"** on the welcome screen.
   Fedora 36+, Arch, openSUSE); Wayland or X11
 - ~12 MiB installed (deb/rpm), ~360 MiB RAM in use - the WebKit runtime is
   shared with the system instead of bundled
-- Optional: `metrics-server` in the cluster for the Metrics view;
-  `aws` / `az` / `gcloud` for cloud connect; `claude` / `codex` for AI
-  assistance
+- Optional: `metrics-server` in the cluster for the Metrics view; `helm` for
+  the Helm view; `aws` / `az` / `gcloud` for cloud connect;
+  `claude` / `codex` / `gemini` / `ollama` for AI assistance
 
 > macOS and Windows builds are actively in progress; the codebase is
 > cross-platform by construction (Tauri), Linux is simply first.
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs), Node.js ≥ 20, and the Tauri Linux
-system libraries:
+Prerequisites: [Rust](https://rustup.rs), Node.js ≥ 20.19 (or 22.12+), and
+the Tauri Linux system libraries:
 
 ```sh
 # Debian/Ubuntu
@@ -216,9 +248,10 @@ The frontend alone also runs in a plain browser (demo mode only):
 
 - `src-tauri/core/` - a plain Rust crate (no UI deps) with one module per
   concern: resource summaries, events, logs (fetch + follow streams), metrics,
-  RBAC self-checks, YAML get/apply, actions, exec, port-forward, and cloud
-  credential import. The only cluster-mutating code lives in `actions.rs` and
-  `yaml.rs`; the only cloud-CLI code lives in `cloud.rs`.
+  RBAC self-checks, YAML get/apply, actions, exec, port-forward, Helm, and
+  cloud credential import. The only cluster-mutating code lives in
+  `actions.rs`, `yaml.rs`, and the management-gated Helm operations in
+  `helm.rs`; the only cloud-CLI code lives in `cloud.rs`.
 - `src-tauri/src/` - thin Tauri IPC commands, plus the PTY sessions for the
   integrated terminal (`terminal.rs`), kept out of the Kubernetes core on
   purpose.
@@ -230,7 +263,10 @@ The frontend alone also runs in a plain browser (demo mode only):
 - `src/providers/` - one interface, two sources: the live Tauri backend or
   the built-in demo cluster. Every feature works against both.
 - `src/actions.ts` - the action catalog: risk levels, RBAC requirements,
-  kubectl intents, and what-will-change descriptions.
+  kubectl intents (context-pinned), and what-will-change descriptions.
+- `src/chains.ts` / `src/insights.ts` / `src/assistant.ts` - the
+  troubleshooting engine: causal problem chains, metrics findings, and the
+  local assistant built on top of them (all pure and unit-tested).
 - `src/ai.ts` - the AI safety layer: sanitized summaries, credential
   redaction, and the dangerous-command analyzer (unit-tested).
 

@@ -98,7 +98,7 @@ async fn run(bin: &str, args: &[&str], timeout_secs: u64) -> std::result::Result
                 if msg.is_empty() {
                     msg = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 }
-                msg.truncate(500);
+                crate::truncate_utf8(&mut msg, 500);
                 Err(CmdError::Failed(msg))
             }
         }

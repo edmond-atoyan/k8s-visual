@@ -59,7 +59,7 @@ async fn run(args: &[&str], stdin: Option<&str>, timeout_secs: u64) -> Result<St
                 if msg.is_empty() {
                     msg = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 }
-                msg.truncate(600);
+                crate::truncate_utf8(&mut msg, 600);
                 Err(Error::Invalid(format!("helm: {msg}")))
             }
         }
@@ -162,7 +162,10 @@ pub async fn release_detail(
     )
     .await
     .unwrap_or_else(|e| format!("# {e}"));
-    let manifest = base("manifest").await.unwrap_or_else(|e| format!("# {e}"));
+    let manifest = base("manifest")
+        .await
+        .map(|m| mask_secret_documents(&m))
+        .unwrap_or_else(|e| format!("# {e}"));
     let notes = base("notes").await.unwrap_or_default();
     let history_raw = run(
         &[
@@ -197,6 +200,47 @@ pub async fn release_detail(
             })
             .collect(),
     })
+}
+
+/// Mask `data`/`stringData` values in every `kind: Secret` document of a
+/// rendered manifest - key names stay visible, values never do (same rule as
+/// the YAML view). If the manifest does not parse, it is returned untouched
+/// rather than half-masked.
+fn mask_secret_documents(manifest: &str) -> String {
+    use serde_yaml::Value;
+    let mut docs: Vec<Value> = Vec::new();
+    for de in serde_yaml::Deserializer::from_str(manifest) {
+        match Value::deserialize(de) {
+            Ok(Value::Null) => {}
+            Ok(v) => docs.push(v),
+            Err(_) => return manifest.to_string(),
+        }
+    }
+    let mut masked = false;
+    for doc in &mut docs {
+        if doc.get("kind").and_then(Value::as_str) != Some("Secret") {
+            continue;
+        }
+        for field in ["data", "stringData"] {
+            if let Some(map) = doc.get_mut(field).and_then(Value::as_mapping_mut) {
+                for value in map.values_mut() {
+                    *value = Value::String("«hidden - secret value»".into());
+                    masked = true;
+                }
+            }
+        }
+    }
+    if !masked {
+        return manifest.to_string();
+    }
+    let mut out = String::new();
+    for doc in &docs {
+        if let Ok(text) = serde_yaml::to_string(doc) {
+            out.push_str("---\n");
+            out.push_str(&text);
+        }
+    }
+    out
 }
 
 pub async fn repos() -> Result<Vec<HelmRepo>> {
@@ -339,5 +383,26 @@ mod tests {
         let json = r#"[{"revision":3,"updated":"2026-06-01T10:00:00Z","status":"superseded","chart":"shop-1.4.1","app_version":"2.0.0","description":"Upgrade complete"}]"#;
         let raw: Vec<RawRevision> = serde_json::from_str(json).unwrap();
         assert_eq!(raw[0].revision, 3);
+    }
+
+    #[test]
+    fn manifest_secret_values_are_masked() {
+        let manifest = "---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db\ndata:\n  password: aHVudGVyMg==\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\ndata:\n  mode: fast\n";
+        let masked = mask_secret_documents(manifest);
+        assert!(
+            !masked.contains("aHVudGVyMg=="),
+            "secret value must be hidden"
+        );
+        assert!(masked.contains("password"), "key names stay visible");
+        assert!(
+            masked.contains("mode: fast"),
+            "non-secret documents untouched"
+        );
+    }
+
+    #[test]
+    fn unparseable_manifest_is_left_alone() {
+        let manifest = "not: [valid: yaml";
+        assert_eq!(mask_secret_documents(manifest), manifest);
     }
 }

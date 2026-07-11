@@ -49,7 +49,8 @@ export function ConfigSecretsView({ provider, snapshot, onSelect }: Props) {
       <h3>Secrets</h3>
       <p className="about">
         Secret values are never fetched or shown automatically. Key names and metadata are safe to display; values
-        require the explicit reveal flow and are never stored or logged by the app.
+        require the explicit reveal flow and are never stored or logged by the app. Note that <em>copying</em> a value
+        places it in the system clipboard, which clipboard managers and sync services may keep.
       </p>
       {secrets.map((s) => (
         <SecretCard key={s.uid} provider={provider} secret={s} mounters={mountersOf(s)} onSelect={onSelect} />
@@ -204,7 +205,8 @@ function SecretCard({
         <div className="issue-box">
           <p>
             Secret values may contain passwords, tokens, keys, and credentials. Only reveal them if you are
-            authorized to view this data. Values are decoded locally, never stored, and never logged.
+            authorized to view this data. Values are decoded locally, never stored, and never logged - but if you
+            copy one, it lands in the system clipboard, which other apps and clipboard history can read.
           </p>
           <div className="modal-actions">
             <button className="btn" onClick={() => setConfirming(false)}>

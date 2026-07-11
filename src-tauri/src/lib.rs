@@ -6,7 +6,7 @@
 //! confirmed action describes and nothing else.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use futures::StreamExt;
 use k8s_visual_core::model::{
@@ -25,8 +25,13 @@ use tauri::State;
 mod terminal;
 use terminal::{AiToolStatus, TerminalManager};
 
-/// The active cluster connection, if any.
-struct AppState(Mutex<Option<Bridge>>);
+/// The active cluster connection, if any, plus the backend's own copy of the
+/// management-mode switch. Read-only is enforced here, not only in React:
+/// every mutating command refuses to run while management mode is off.
+struct AppState {
+    bridge: Mutex<Option<Bridge>>,
+    management: AtomicBool,
+}
 
 /// Running log-follow tasks, so the UI can stop them.
 struct LogStreams(
@@ -36,14 +41,27 @@ struct LogStreams(
 
 struct Forwards(PortForwardManager);
 
-/// Run a Bridge method while holding the connection lock, mapping errors to
-/// user-readable strings.
+/// Run a Bridge method, mapping errors to user-readable strings. The bridge
+/// is cloned out of the lock (cheap - the client is reference-counted) so no
+/// slow request can block connect/disconnect or other reads.
 macro_rules! with_bridge {
     ($state:expr, $bridge:ident => $body:expr) => {{
-        let guard = $state.0.lock().await;
-        let $bridge = guard.as_ref().ok_or("Not connected to a cluster")?;
+        let $bridge = {
+            let guard = $state.bridge.lock().await;
+            guard.as_ref().ok_or("Not connected to a cluster")?.clone()
+        };
+        let $bridge = &$bridge;
         $body.map_err(|e| e.to_string())
     }};
+}
+
+/// Backend read-only guard for cluster-mutating commands.
+fn require_management(state: &State<'_, AppState>) -> Result<(), String> {
+    if state.management.load(Ordering::SeqCst) {
+        Ok(())
+    } else {
+        Err("The app is in read-only mode - enable management mode in the title bar first.".into())
+    }
 }
 
 #[tauri::command]
@@ -101,7 +119,9 @@ async fn connect(
 ) -> Result<ClusterInfo, String> {
     let bridge = Bridge::connect(context).await.map_err(|e| e.to_string())?;
     let info = bridge.info.clone();
-    *state.0.lock().await = Some(bridge);
+    // Every session starts read-only, in the backend too.
+    state.management.store(false, Ordering::SeqCst);
+    *state.bridge.lock().await = Some(bridge);
     Ok(info)
 }
 
@@ -109,9 +129,24 @@ async fn connect(
 async fn disconnect(
     state: State<'_, AppState>,
     forwards: State<'_, Forwards>,
+    streams: State<'_, LogStreams>,
 ) -> Result<(), String> {
     forwards.0.stop_all().await;
-    *state.0.lock().await = None;
+    // Log-follow streams belong to the old cluster - they must not survive it.
+    for (_, handle) in streams.0.lock().await.drain() {
+        handle.abort();
+    }
+    state.management.store(false, Ordering::SeqCst);
+    *state.bridge.lock().await = None;
+    Ok(())
+}
+
+/// Mirror of the frontend's management-mode toggle. Mutating commands check
+/// this flag in the backend so read-only mode does not depend on React state
+/// alone.
+#[tauri::command]
+fn set_management(state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    state.management.store(on, Ordering::SeqCst);
     Ok(())
 }
 
@@ -143,8 +178,10 @@ async fn get_events(
 
 #[tauri::command]
 async fn detect_prometheus(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    let guard = state.0.lock().await;
-    let bridge = guard.as_ref().ok_or("Not connected to a cluster")?;
+    let bridge = {
+        let guard = state.bridge.lock().await;
+        guard.as_ref().ok_or("Not connected to a cluster")?.clone()
+    };
     Ok(bridge.detect_prometheus().await)
 }
 
@@ -179,7 +216,7 @@ async fn start_log_stream(
     on_line: Channel<String>,
 ) -> Result<u64, String> {
     let client = {
-        let guard = state.0.lock().await;
+        let guard = state.bridge.lock().await;
         guard.as_ref().ok_or("Not connected to a cluster")?.client()
     };
     let stream = k8s_visual_core::logs::stream(&client, &query)
@@ -247,6 +284,7 @@ async fn perform_action(
     state: State<'_, AppState>,
     action: Action,
 ) -> Result<ActionResult, String> {
+    require_management(&state)?;
     with_bridge!(state, b => b.perform_action(action).await)
 }
 
@@ -257,6 +295,9 @@ async fn apply_yaml(
     default_namespace: String,
     dry_run: bool,
 ) -> Result<ApplyResult, String> {
+    if !dry_run {
+        require_management(&state)?;
+    }
     with_bridge!(state, b => b.apply_yaml(&yaml, &default_namespace, dry_run).await)
 }
 
@@ -265,6 +306,7 @@ async fn exec_command(
     state: State<'_, AppState>,
     request: ExecRequest,
 ) -> Result<ExecResult, String> {
+    require_management(&state)?;
     with_bridge!(state, b => b.exec(&request).await)
 }
 
@@ -280,7 +322,7 @@ async fn start_port_forward(
     request: PortForwardRequest,
 ) -> Result<PortForwardInfo, String> {
     let client = {
-        let guard = state.0.lock().await;
+        let guard = state.bridge.lock().await;
         guard.as_ref().ok_or("Not connected to a cluster")?.client()
     };
     forwards
@@ -298,13 +340,34 @@ async fn stop_port_forward(forwards: State<'_, Forwards>, id: String) -> Result<
 // --- integrated terminal (see terminal.rs; separate from Kubernetes logic) ----
 
 #[tauri::command]
-fn term_open(
+async fn term_open(
+    state: State<'_, AppState>,
     terminals: State<'_, TerminalManager>,
     cols: u16,
     rows: u16,
     env: Vec<(String, String)>,
     on_data: Channel<String>,
 ) -> Result<u64, String> {
+    // Pin the shell to the cluster the app is connected to: kubectl and helm
+    // ignore the K8S_VISUAL_* variables, so without a pinned KUBECONFIG they
+    // would silently use the kubeconfig current-context - possibly a
+    // different cluster than the one shown in the terminal header.
+    let mut env = env;
+    let context = {
+        let guard = state.bridge.lock().await;
+        guard.as_ref().map(|b| b.info.context.clone())
+    };
+    if let Some(ctx) = context {
+        match k8s_visual_core::write_pinned_kubeconfig(&ctx) {
+            Ok(path) => env.push(("KUBECONFIG".into(), path.display().to_string())),
+            Err(e) => {
+                // Never open a shell that could target the wrong cluster.
+                return Err(format!(
+                    "could not pin the terminal to context \"{ctx}\": {e}"
+                ));
+            }
+        }
+    }
     terminals.open(cols, rows, env, on_data)
 }
 
@@ -339,7 +402,7 @@ async fn detect_ai_tools() -> Result<Vec<AiToolStatus>, String> {
 /// The context the app is connected to - helm commands never rely on the
 /// kubeconfig current-context.
 async fn app_context(state: &State<'_, AppState>) -> Result<String, String> {
-    let guard = state.0.lock().await;
+    let guard = state.bridge.lock().await;
     Ok(guard
         .as_ref()
         .ok_or("Not connected to a cluster")?
@@ -399,10 +462,12 @@ async fn helm_show(kind: String, chart: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn helm_repo_modify(
+    state: State<'_, AppState>,
     op: String,
     name: Option<String>,
     url: Option<String>,
 ) -> Result<String, String> {
+    require_management(&state)?;
     k8s_visual_core::helm::repo_modify(&op, name.as_deref(), url.as_deref())
         .await
         .map_err(|e| e.to_string())
@@ -418,6 +483,7 @@ async fn helm_action(
     revision: Option<i64>,
     values: Option<String>,
 ) -> Result<String, String> {
+    require_management(&state)?;
     let ctx = app_context(&state).await?;
     k8s_visual_core::helm::action(
         &ctx,
@@ -436,7 +502,10 @@ async fn helm_action(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState(Mutex::new(None)))
+        .manage(AppState {
+            bridge: Mutex::new(None),
+            management: AtomicBool::new(false),
+        })
         .manage(LogStreams(Mutex::new(HashMap::new()), AtomicU64::new(0)))
         .manage(Forwards(PortForwardManager::new()))
         .manage(TerminalManager::new())
@@ -449,6 +518,7 @@ pub fn run() {
             cloud_import,
             connect,
             disconnect,
+            set_management,
             get_overview,
             get_snapshot,
             get_nodes,

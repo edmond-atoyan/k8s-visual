@@ -12,7 +12,7 @@ import "@xyflow/react/dist/style.css";
 import { buildGraph, connectedUids, type EdgeKind, type GraphEdge } from "../graph/build";
 import { layoutGraph, NODE_H, NODE_W } from "../graph/layout";
 import { KIND_INFO } from "../kindInfo";
-import type { NamespaceSnapshot } from "../types";
+import type { Kind, NamespaceSnapshot } from "../types";
 import { Icon } from "../components/icons";
 import { ResourceNode, type ResourceFlowNode } from "../components/ResourceNode";
 
@@ -45,18 +45,21 @@ export function GraphView({ snapshot, selectedUid, onSelect }: Props) {
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
 
   const { nodes, edges, graph, problemCount } = useMemo(() => {
-    const visible = snapshot.resources.filter((r) => {
-      const group = KIND_INFO[r.kind].group;
-      if (group === "Networking" && !showNetworking) return false;
-      if (group === "Config & Storage" && !showConfig) return false;
-      return true;
-    });
-    const graph = buildGraph(visible);
+    // Build the graph from the FULL snapshot and hide groups afterwards:
+    // filtering the input would turn intentionally hidden ConfigMaps/Secrets/
+    // PVCs into fabricated "missing" ghost nodes with broken edges.
+    const graph = buildGraph(snapshot.resources);
+    const hidden = (kind: Kind) => {
+      const group = KIND_INFO[kind]?.group;
+      if (group === "Networking" && !showNetworking) return true;
+      if (group === "Config & Storage" && !showConfig) return true;
+      return false;
+    };
     const problemCount =
       graph.resources.filter((r) => r.health === "critical" || r.health === "warning").length +
       graph.issues.size;
 
-    let shown = graph.resources;
+    let shown = graph.resources.filter((r) => !hidden(r.kind));
     if (problemsOnly) {
       // Problems plus everything directly connected to them, for context.
       const keep = new Set<string>();
@@ -65,7 +68,7 @@ export function GraphView({ snapshot, selectedUid, onSelect }: Props) {
           for (const uid of connectedUids(graph, r.uid)) keep.add(uid);
         }
       }
-      shown = graph.resources.filter((r) => keep.has(r.uid));
+      shown = shown.filter((r) => keep.has(r.uid));
     }
     const shownUids = new Set(shown.map((r) => r.uid));
 

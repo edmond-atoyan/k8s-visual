@@ -39,15 +39,27 @@ export function ActionModal({ provider, cluster, resource: r, descriptor: d, onC
         if (!cancelled && res[0]) setAccess({ allowed: res[0].allowed, reason: res[0].reason });
       })
       .catch(() => {
-        if (!cancelled) setAccess({ allowed: true, reason: "access check unavailable" });
+        // Could not verify: allow (the API server enforces RBAC regardless)
+        // but say so - never silently pretend the check passed.
+        if (!cancelled) setAccess({ allowed: true, reason: "permission check unavailable - the API server will still enforce RBAC" });
       });
     return () => {
       cancelled = true;
     };
   }, [provider, d, r.namespace]);
 
+  // Declared min/max are enforced, not just hinted to the browser.
+  const inputsValid = inputSpecs.every((spec) => {
+    const v = inputs[spec.name];
+    return (
+      Number.isFinite(v) &&
+      (spec.min === undefined || v >= spec.min) &&
+      (spec.max === undefined || v <= spec.max)
+    );
+  });
   const nameConfirmed = !d.confirmName || typedName === r.name;
-  const canExecute = !busy && !result?.ok && nameConfirmed && access?.allowed !== false;
+  // Execute stays disabled until the RBAC check resolves (access !== null).
+  const canExecute = !busy && !result?.ok && nameConfirmed && inputsValid && access !== null && access.allowed;
 
   const execute = async () => {
     setBusy(true);
@@ -103,18 +115,36 @@ export function ActionModal({ provider, cluster, resource: r, descriptor: d, onC
           </dd>
         </dl>
 
-        {inputSpecs.map((spec) => (
-          <label key={spec.name} className="modal-input">
-            <span>{spec.label}</span>
-            <input
-              type="number"
-              min={spec.min}
-              max={spec.max}
-              value={inputs[spec.name]}
-              onChange={(e) => setInputs((v) => ({ ...v, [spec.name]: Number(e.target.value) }))}
-            />
-          </label>
-        ))}
+        {inputSpecs.map((spec) => {
+          const v = inputs[spec.name];
+          const outOfRange =
+            Number.isFinite(v) &&
+            ((spec.min !== undefined && v < spec.min) || (spec.max !== undefined && v > spec.max));
+          return (
+            <label key={spec.name} className="modal-input">
+              <span>{spec.label}</span>
+              <input
+                type="number"
+                min={spec.min}
+                max={spec.max}
+                value={Number.isFinite(v) ? v : ""}
+                onChange={(e) => {
+                  const n = e.target.value === "" ? NaN : Number(e.target.value);
+                  setInputs((prev) => ({ ...prev, [spec.name]: n }));
+                }}
+              />
+              {outOfRange && (
+                <span className="age">
+                  must be {spec.min !== undefined && spec.max !== undefined
+                    ? `between ${spec.min} and ${spec.max}`
+                    : spec.min !== undefined
+                      ? `at least ${spec.min}`
+                      : `at most ${spec.max}`}
+                </span>
+              )}
+            </label>
+          );
+        })}
 
         <h3>What will change</h3>
         <p className="about">{d.describe(r, inputs)}</p>
@@ -128,6 +158,7 @@ export function ActionModal({ provider, cluster, resource: r, descriptor: d, onC
             {access.reason ? ` (${access.reason})` : ""}
           </div>
         )}
+        {access?.allowed && access.reason && <p className="about">{access.reason}</p>}
 
         {d.confirmName && !result?.ok && (
           <label className="modal-input confirm-name">
@@ -157,7 +188,7 @@ export function ActionModal({ provider, cluster, resource: r, descriptor: d, onC
               disabled={!canExecute}
               onClick={() => void execute()}
             >
-              {busy ? "Working…" : d.label.replace(/…$/, "")}
+              {busy ? "Working…" : access === null ? "Checking permissions…" : d.label.replace(/…$/, "")}
             </button>
           )}
         </div>

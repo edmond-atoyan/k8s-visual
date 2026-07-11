@@ -112,9 +112,11 @@ export function buildResourceSummary(
   }
   for (const issue of issues) lines.push(`diagnostic: ${issue}`);
   for (const e of events.slice(0, 5)) {
-    lines.push(`event [${e.type}] ${e.reason} x${e.count}: ${redactSecrets(e.message)}`);
+    lines.push(`event [${e.type}] ${e.reason} x${e.count}: ${e.message}`);
   }
-  return lines.join("\n");
+  // Scrub the whole summary, not only event messages: controller-generated
+  // details and condition messages can carry credential-shaped URLs or tokens.
+  return redactSecrets(lines.join("\n"));
 }
 
 /** Single-quote a string for POSIX shells. */

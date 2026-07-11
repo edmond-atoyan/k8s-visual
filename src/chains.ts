@@ -55,7 +55,10 @@ export function buildProblemChains(resources: ResourceSummary[], events: EventIn
     return path;
   };
 
-  const eventsFor = (name: string) => events.filter((e) => e.involvedName === name);
+  // Match kind AND name: a Pod and a PVC/Service sharing a name must not
+  // contaminate one another's evidence.
+  const eventsFor = (kind: string, name: string) =>
+    events.filter((e) => e.involvedKind === kind && e.involvedName === name);
 
   const ancestryLinks = (pod: ResourceSummary, symptom: string): ChainLink[] =>
     ancestry(pod).map((r) => ({
@@ -77,7 +80,7 @@ export function buildProblemChains(resources: ResourceSummary[], events: EventIn
   for (const r of resources) {
     if (r.kind !== "Pod") continue;
     const root = ancestry(r)[0];
-    const podEvents = eventsFor(r.name);
+    const podEvents = eventsFor("Pod", r.name);
     const states = (r.containers ?? [])
       .map((c) => `${c.state}${c.lastState ? ` ${c.lastState}` : ""}`)
       .join(" ");
@@ -145,7 +148,7 @@ export function buildProblemChains(resources: ResourceSummary[], events: EventIn
       if (pvc && pvc.status === "Pending") {
         const scName = pvc.details["StorageClass"];
         const sc = scName ? resources.find((x) => x.kind === "StorageClass" && x.name === scName) : undefined;
-        const pvcEvents = eventsFor(pvc.name);
+        const pvcEvents = eventsFor("PersistentVolumeClaim", pvc.name);
         add(
           `pvc:${pvc.uid}`,
           () => ({
@@ -252,6 +255,7 @@ export function buildProblemChains(resources: ResourceSummary[], events: EventIn
   // HPAs that cannot read metrics (from events).
   for (const e of events) {
     if (!/FailedGetResourceMetric|FailedComputeMetricsReplicas/i.test(e.reason)) continue;
+    if (e.involvedKind !== "HorizontalPodAutoscaler") continue;
     const hpa = resources.find((x) => x.kind === "HorizontalPodAutoscaler" && x.name === e.involvedName);
     if (!hpa) continue;
     add(`hpa:${hpa.uid}`, () => ({

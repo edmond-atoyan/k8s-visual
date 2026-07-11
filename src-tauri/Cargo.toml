@@ -1,6 +1,6 @@
 [package]
 name = "k8s-visual"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "A lightweight desktop app that makes Kubernetes architecture visible and understandable"
 license = "MIT"

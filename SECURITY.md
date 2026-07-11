@@ -14,29 +14,46 @@ reproduce and the app version (`Help → About`).
 K8s Visual is a local desktop application. Its security model is simple and
 worth stating explicitly so it can be audited against the code:
 
-- **No telemetry, no network calls except to your cluster.** The only
-  outbound connections are to the Kubernetes API server of the kubeconfig
-  context you chose (via [kube-rs](https://kube.rs)) and the local tunnels
-  you explicitly start with port-forward.
-- **Read-only by default.** Every session starts read-only. The only
-  cluster-mutating code paths are `core/src/actions.rs` and
-  `core/src/yaml.rs`, both reachable only through the management-mode
+- **No telemetry, no data upload.** The app itself only talks to the
+  Kubernetes API server of the kubeconfig context you chose (via
+  [kube-rs](https://kube.rs)) and the local tunnels you explicitly start
+  with port-forward. Tools the app runs *on your behalf and at your request*
+  can reach other endpoints: your own `aws`/`az`/`gcloud` CLI during cloud
+  connect, `helm` when you update chart repositories, AI CLIs you invoke,
+  and links opened in your browser. None of these receive data
+  automatically.
+- **Read-only by default, enforced twice.** Every session starts read-only.
+  The UI gates every mutating control, and the Rust backend independently
+  refuses mutating commands (actions, non-dry-run apply, exec, Helm writes)
+  while management mode is off. The only cluster-mutating code paths are
+  `core/src/actions.rs`, `core/src/yaml.rs`, and the management-gated Helm
+  operations in `core/src/helm.rs`, all reachable only through the
   confirmation flow.
+- **The right cluster, always.** Every kubectl command the app displays
+  carries `--context` for the connected cluster, and the integrated terminal
+  receives a `KUBECONFIG` copy pinned to that context - shell tools cannot
+  silently target the kubeconfig current-context.
 - **Secrets are never fetched implicitly.** Secret listings show names, key
   names and sizes only. Values are fetched by an explicit confirmed reveal,
-  never stored, and masked in YAML views.
+  never stored, and masked in YAML views - including the
+  `kubectl.kubernetes.io/last-applied-configuration` annotation, which
+  embeds them. Helm manifests are masked the same way, and release values
+  render only after an explicit reveal. Copying a revealed value places it
+  in the system clipboard, which is outside the app's control.
 - **Cloud connect never touches credentials.** The EKS/AKS/GKE flows shell
   out to your own `aws`/`az`/`gcloud` CLI, which writes the kubeconfig entry
   itself. The app never reads, stores, or transmits cloud credentials, and
   shows each CLI command before running it (`core/src/cloud.rs`).
 - **AI CLIs receive nothing automatically.** Hand-offs to Claude Code /
-  Codex CLI are explicit user actions; payloads are sanitized summaries
-  (never Secret values, annotations, tokens, certificates, or kubeconfig
-  contents), commands are typed into the terminal for review rather than
-  executed, and log excerpts pass through credential redaction (`src/ai.ts`).
-- **The integrated terminal is your own shell.** The app adds context
-  environment variables and a best-effort hold on dangerous kubectl commands;
-  it does not (and cannot) sandbox the shell, and says so in the UI.
+  Codex / Gemini CLI / Ollama are explicit user actions; payloads are
+  sanitized summaries (never Secret values, annotations, tokens,
+  certificates, or kubeconfig contents) that pass through credential
+  redaction, and commands are typed into the terminal for review rather
+  than executed (`src/ai.ts`).
+- **The integrated terminal is your own shell.** The app pins the session's
+  `KUBECONFIG` to the connected cluster and adds a best-effort hold on
+  dangerous kubectl commands; it does not (and cannot) sandbox the shell,
+  and says so in the UI.
 
 ## Supported versions
 

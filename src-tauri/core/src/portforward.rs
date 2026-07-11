@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use k8s_openapi::api::core::v1::{Pod, Service};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
@@ -18,12 +19,27 @@ use crate::{Error, Result};
 struct ActiveForward {
     info: PortForwardInfo,
     accept_task: JoinHandle<()>,
+    /// Per-connection tunnel tasks: aborting only the accept loop would leave
+    /// established connections alive past Stop / disconnect.
+    conn_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
+}
+
+impl ActiveForward {
+    async fn shut_down(self) {
+        self.accept_task.abort();
+        for task in self.conn_tasks.lock().await.drain(..) {
+            task.abort();
+        }
+    }
 }
 
 #[derive(Default)]
 pub struct PortForwardManager {
     forwards: Mutex<HashMap<String, ActiveForward>>,
     next_id: AtomicU64,
+    /// Bumped by stop_all so a forward still starting cannot register
+    /// against a connection that has since been closed.
+    generation: AtomicU64,
 }
 
 impl PortForwardManager {
@@ -46,7 +62,7 @@ impl PortForwardManager {
     pub async fn stop(&self, id: &str) -> Result<()> {
         match self.forwards.lock().await.remove(id) {
             Some(forward) => {
-                forward.accept_task.abort();
+                forward.shut_down().await;
                 Ok(())
             }
             None => Err(Error::Invalid(format!("no port-forward with id {id}"))),
@@ -54,8 +70,11 @@ impl PortForwardManager {
     }
 
     pub async fn stop_all(&self) {
-        for (_, forward) in self.forwards.lock().await.drain() {
-            forward.accept_task.abort();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let drained: Vec<ActiveForward> =
+            self.forwards.lock().await.drain().map(|(_, f)| f).collect();
+        for forward in drained {
+            forward.shut_down().await;
         }
     }
 
@@ -64,6 +83,7 @@ impl PortForwardManager {
         client: &Client,
         req: &PortForwardRequest,
     ) -> Result<PortForwardInfo> {
+        let generation = self.generation.load(Ordering::SeqCst);
         let (target_pod, pod_port) = resolve_target(client, req).await?;
 
         let listener = TcpListener::bind(("127.0.0.1", req.local_port))
@@ -92,6 +112,8 @@ impl PortForwardManager {
         };
 
         let pods = Api::<Pod>::namespaced(client.clone(), &req.namespace);
+        let conn_tasks: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::default();
+        let conn_tasks_in_loop = conn_tasks.clone();
         let accept_task = tokio::spawn(async move {
             loop {
                 let Ok((mut local_conn, _)) = listener.accept().await else {
@@ -100,7 +122,7 @@ impl PortForwardManager {
                 let pods = pods.clone();
                 let pod = target_pod.clone();
                 // One API-server tunnel per TCP connection, like kubectl.
-                tokio::spawn(async move {
+                let task = tokio::spawn(async move {
                     let Ok(mut forwarder) = pods.portforward(&pod, &[pod_port]).await else {
                         return;
                     };
@@ -110,16 +132,27 @@ impl PortForwardManager {
                     let _ = tokio::io::copy_bidirectional(&mut local_conn, &mut upstream).await;
                     let _ = forwarder.join().await;
                 });
+                let mut tasks = conn_tasks_in_loop.lock().await;
+                tasks.retain(|t| !t.is_finished());
+                tasks.push(task);
             }
         });
 
-        self.forwards.lock().await.insert(
-            id,
-            ActiveForward {
-                info: info.clone(),
-                accept_task,
-            },
-        );
+        let forward = ActiveForward {
+            info: info.clone(),
+            accept_task,
+            conn_tasks,
+        };
+        let mut forwards = self.forwards.lock().await;
+        if self.generation.load(Ordering::SeqCst) != generation {
+            // The cluster was disconnected while this forward was starting.
+            drop(forwards);
+            forward.shut_down().await;
+            return Err(Error::Invalid(
+                "the cluster connection was closed while the port-forward was starting".into(),
+            ));
+        }
+        forwards.insert(id, forward);
         Ok(info)
     }
 }

@@ -183,6 +183,8 @@ export interface ResourceSummary {
 export interface NamespaceSnapshot {
   namespace: string;
   resources: ResourceSummary[];
+  /** Per-kind list failures (e.g. RBAC denials) behind a partial snapshot. */
+  warnings?: string[];
 }
 
 // --- events ----------------------------------------------------------------

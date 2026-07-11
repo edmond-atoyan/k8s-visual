@@ -18,7 +18,12 @@ use kube::ResourceExt;
 use crate::model::*;
 
 pub(crate) fn base(kind: &str, obj: &impl ResourceExt) -> ResourceSummary {
-    let annotations = obj.annotations();
+    let mut annotations = obj.annotations().clone();
+    if kind == "Secret" {
+        // kubectl's last-applied annotation embeds the full object, secret
+        // values included - it must never reach the frontend model.
+        annotations.remove("kubectl.kubernetes.io/last-applied-configuration");
+    }
     ResourceSummary {
         uid: obj.uid().unwrap_or_default(),
         kind: kind.to_string(),
@@ -37,7 +42,7 @@ pub(crate) fn base(kind: &str, obj: &impl ResourceExt) -> ResourceSummary {
         annotations: if annotations.is_empty() {
             None
         } else {
-            Some(annotations.clone())
+            Some(annotations)
         },
         status: String::new(),
         health: Health::Neutral,

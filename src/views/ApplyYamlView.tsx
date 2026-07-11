@@ -26,7 +26,10 @@ spec:
 export function ApplyYamlView({ provider, namespace, management }: Props) {
   const [text, setText] = useState("");
   const [dryRun, setDryRun] = useState<ApplyResult | null>(null);
-  const [dryRunFor, setDryRunFor] = useState("");
+  // The approval is bound to text AND namespace: documents without an
+  // explicit metadata.namespace land in the selected one, so switching
+  // namespaces after a dry-run must invalidate it.
+  const [dryRunFor, setDryRunFor] = useState<{ text: string; namespace: string } | null>(null);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -36,11 +39,10 @@ export function ApplyYamlView({ provider, namespace, management }: Props) {
     setApplied(null);
     try {
       setDryRun(await provider.applyYaml(text, true, namespace));
-      setDryRunFor(text);
     } catch (e) {
       setDryRun({ ok: false, dryRun: true, results: [], error: String(e) });
-      setDryRunFor(text);
     } finally {
+      setDryRunFor({ text, namespace });
       setBusy(false);
     }
   };
@@ -78,7 +80,8 @@ export function ApplyYamlView({ provider, namespace, management }: Props) {
     );
   }
 
-  const canApply = dryRun?.ok === true && dryRunFor === text && text.trim() !== "";
+  const upToDate = dryRunFor !== null && dryRunFor.text === text && dryRunFor.namespace === namespace;
+  const canApply = dryRun?.ok === true && upToDate && text.trim() !== "";
 
   return (
     <div className="overview wide">
@@ -141,7 +144,7 @@ export function ApplyYamlView({ provider, namespace, management }: Props) {
         <div className={dryRun.ok ? "result-banner ok" : "error-banner"}>
           <strong>Dry-run:</strong>{" "}
           {dryRun.ok ? dryRun.results.join("; ") : (dryRun.error ?? "failed")}
-          {dryRun.ok && dryRunFor !== text && " (text changed since - run again)"}
+          {dryRun.ok && !upToDate && " (text or namespace changed since - run again)"}
         </div>
       )}
       {applied && (
