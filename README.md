@@ -15,7 +15,7 @@ CLI integration.
 ![macOS & Windows](https://img.shields.io/badge/macOS%20%26%20Windows-in%20progress-orange.svg)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)
 
-<img src="docs/screenshot-dark.png" alt="K8s Visual: a namespace drawn as a live graph (Ingress routes to Services, a Deployment owns ReplicaSets, ReplicaSets run Pods, Pods mount ConfigMaps and Secrets), a details panel explaining the selected Deployment, and the integrated terminal open at the bottom with context, namespace and AI CLI buttons." width="920">
+<img src="docs/screenshot-dark.png" alt="K8s Visual: a namespace drawn as a live graph (Ingress routes to Services, a Deployment owns ReplicaSets, ReplicaSets run Pods, Pods mount ConfigMaps and Secrets), a details panel showing the selected Deployment's problem chain from symptom to root cause with suggested kubectl checks, and the integrated terminal open at the bottom with context, namespace and AI CLI buttons." width="920">
 
 </div>
 
