@@ -40,7 +40,9 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "K8s Visual ${{ github.ref_name }}"
-          releaseDraft: true
+          # Publish directly: the tag is only pushed after local verification
+          # (and this workflow re-runs the full test suite above).
+          releaseDraft: false
           releaseBody: |
             Download the AppImage (any distro), .deb (Debian/Ubuntu) or .rpm
             (Fedora/openSUSE) below. First time? Just run it and hit
