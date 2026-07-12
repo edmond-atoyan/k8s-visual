@@ -144,24 +144,6 @@ pub async fn release_detail(
             .await
         }
     };
-    // Values as the user supplied them (not computed) - what `helm get values` shows.
-    let values = run(
-        &[
-            "get",
-            "values",
-            name,
-            "--kube-context",
-            context,
-            "-n",
-            namespace,
-            "-o",
-            "yaml",
-        ],
-        None,
-        LIST_TIMEOUT,
-    )
-    .await
-    .unwrap_or_else(|e| format!("# {e}"));
     let manifest = base("manifest")
         .await
         .map(|m| mask_secret_documents(&m))
@@ -185,7 +167,6 @@ pub async fn release_detail(
     let history: Vec<RawRevision> = serde_json::from_str(&history_raw)
         .map_err(|e| Error::Invalid(format!("unexpected `helm history` output: {e}")))?;
     Ok(HelmReleaseDetail {
-        values,
         manifest,
         notes,
         history: history
@@ -202,10 +183,32 @@ pub async fn release_detail(
     })
 }
 
+/// Values as the user supplied them (`helm get values`). A separate call by
+/// design: values commonly contain credentials, so the UI fetches them only
+/// on an explicit "Show values" action, never as part of routine detail.
+pub async fn release_values(context: &str, namespace: &str, name: &str) -> Result<String> {
+    run(
+        &[
+            "get",
+            "values",
+            name,
+            "--kube-context",
+            context,
+            "-n",
+            namespace,
+            "-o",
+            "yaml",
+        ],
+        None,
+        LIST_TIMEOUT,
+    )
+    .await
+}
+
 /// Mask `data`/`stringData` values in every `kind: Secret` document of a
 /// rendered manifest - key names stay visible, values never do (same rule as
-/// the YAML view). If the manifest does not parse, it is returned untouched
-/// rather than half-masked.
+/// the YAML view). Fails CLOSED: if the manifest cannot be parsed, it is not
+/// shown at all - an unparseable manifest must never mean an unmasked one.
 fn mask_secret_documents(manifest: &str) -> String {
     use serde_yaml::Value;
     let mut docs: Vec<Value> = Vec::new();
@@ -213,7 +216,11 @@ fn mask_secret_documents(manifest: &str) -> String {
         match Value::deserialize(de) {
             Ok(Value::Null) => {}
             Ok(v) => docs.push(v),
-            Err(_) => return manifest.to_string(),
+            Err(_) => {
+                return "# The manifest could not be parsed for Secret masking, so it is not \
+                        shown here.\n# Inspect it with: helm get manifest <release>"
+                    .to_string()
+            }
         }
     }
     let mut masked = false;
@@ -401,8 +408,13 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_manifest_is_left_alone() {
-        let manifest = "not: [valid: yaml";
-        assert_eq!(mask_secret_documents(manifest), manifest);
+    fn unparseable_manifest_fails_closed() {
+        let manifest = "not: [valid: yaml\ndata:\n  password: aHVudGVyMg==";
+        let masked = mask_secret_documents(manifest);
+        assert!(
+            !masked.contains("aHVudGVyMg=="),
+            "an unparseable manifest must never be shown unmasked"
+        );
+        assert!(masked.contains("could not be parsed"));
     }
 }

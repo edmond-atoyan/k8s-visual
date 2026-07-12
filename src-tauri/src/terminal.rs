@@ -34,15 +34,18 @@ impl TerminalManager {
         }
     }
 
-    /// Spawn the user's shell in a new PTY. `env` carries non-secret context
-    /// (K8S_VISUAL_CONTEXT / K8S_VISUAL_NAMESPACE, plus a KUBECONFIG pinned
-    /// to the app's connection when one exists - see `term_open` in lib.rs);
-    /// the child otherwise inherits the session environment.
+    /// Spawn the user's shell in a new PTY. `kubeconfig` is the per-session
+    /// pinned kubeconfig written by `term_open` in lib.rs - this manager owns
+    /// its lifetime and deletes it when the shell exits (naturally or via
+    /// close). `env` carries non-secret context (K8S_VISUAL_CONTEXT /
+    /// K8S_VISUAL_NAMESPACE); the child otherwise inherits the session
+    /// environment.
     pub fn open(
         &self,
         cols: u16,
         rows: u16,
         env: Vec<(String, String)>,
+        kubeconfig: std::path::PathBuf,
         on_data: Channel<String>,
     ) -> Result<u64, String> {
         let pty = native_pty_system()
@@ -63,24 +66,23 @@ impl TerminalManager {
         cmd.env("PATH", k8s_visual_core::cloud::augmented_path());
         if let Ok(home) = std::env::var("HOME") {
             cmd.cwd(&home);
-            // Make the kubeconfig explicit (default path) if not already set,
-            // so tools in the shell agree with what the app is connected to.
-            if std::env::var_os("KUBECONFIG").is_none() {
-                let default = format!("{home}/.kube/config");
-                if std::path::Path::new(&default).exists() {
-                    cmd.env("KUBECONFIG", default);
-                }
-            }
         }
+        cmd.env("KUBECONFIG", kubeconfig.as_os_str());
         for (k, v) in env {
             cmd.env(k, v);
         }
 
-        let child = pty
+        let mut child = pty
             .slave
             .spawn_command(cmd)
             .map_err(|e| format!("could not start {shell}: {e}"))?;
         let killer = child.clone_killer();
+        // Reap the child when it exits (naturally or killed), then remove its
+        // pinned kubeconfig - credential copies must not outlive the session.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&kubeconfig);
+        });
 
         let mut reader = pty
             .master
@@ -161,6 +163,14 @@ impl TerminalManager {
 
     pub fn close(&self, id: u64) {
         if let Some(mut s) = self.sessions.lock().unwrap().remove(&id) {
+            let _ = s.killer.kill();
+        }
+    }
+
+    /// Kill every session. Called on cluster connect/disconnect: a shell
+    /// pinned to the old cluster must not survive the UI moving to a new one.
+    pub fn close_all(&self) {
+        for (_, mut s) in self.sessions.lock().unwrap().drain() {
             let _ = s.killer.kill();
         }
     }

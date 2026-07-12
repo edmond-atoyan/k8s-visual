@@ -4,6 +4,7 @@
 // External AI CLIs (Claude/Codex/Gemini/Ollama) are optional extensions that
 // receive a sanitized, user-previewed payload and never anything automatic.
 
+import { pinCommand } from "./actions";
 import { buildResourceSummary, redactSecrets } from "./ai";
 import type { ProblemChain } from "./chains";
 import { KIND_INFO } from "./kindInfo";
@@ -65,7 +66,7 @@ export function summarizeNamespace(
     title: `Namespace health: ${namespace}`,
     diagnosis,
     chains,
-    checks: [`kubectl get all -n ${namespace}`, `kubectl get events -n ${namespace} --sort-by=.lastTimestamp`],
+    checks: [pinCommand(`kubectl get all -n ${namespace}`), pinCommand(`kubectl get events -n ${namespace} --sort-by=.lastTimestamp`)],
   };
 }
 
@@ -102,8 +103,8 @@ export function explainResource(
     diagnosis,
     chains,
     checks: [
-      `kubectl describe ${resource.kind.toLowerCase()} ${resource.name} -n ${ns}`,
-      `kubectl get events -n ${ns} --field-selector involvedObject.name=${resource.name}`,
+      pinCommand(`kubectl describe ${resource.kind.toLowerCase()} ${resource.name} -n ${ns}`),
+      pinCommand(`kubectl get events -n ${ns} --field-selector involvedObject.name=${resource.name}`),
     ],
   };
 }

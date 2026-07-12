@@ -28,6 +28,12 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      # A release tag must never ship untested code: tags do not go through
+      # the CI workflow, so the full test suite runs here first.
+      - run: npm run build && npm test
+      - name: Rust tests
+        run: cargo test --workspace
+        working-directory: src-tauri
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

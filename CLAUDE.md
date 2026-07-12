@@ -15,9 +15,16 @@ risk level → confirm). Secret values are never fetched implicitly, never
 stored, and are masked in YAML (including the kubectl last-applied
 annotation, which embeds them); reveal is a separate confirmed call. Every
 kubectl string the app shows carries `--context` for the connected cluster
-(`actions.ts setKubectlContext`), and the integrated terminal gets a
-KUBECONFIG copy pinned to that context (`core write_pinned_kubeconfig`) so
-shell tools can never silently target the kubeconfig current-context.
+(`actions.ts setKubectlContext` + `pinCommand`, applied inside KubectlHint
+and at chains/insights/assistant construction), and every terminal session
+gets a MINIMAL per-session kubeconfig - only the selected context's
+identity + namespace, random 0600 file, deleted when the shell exits
+(`core write_pinned_kubeconfig`); demo terminals get an EMPTY kubeconfig,
+and all terminals are killed on connect/disconnect. Helm release values are
+fetched only via the explicit `helm_release_values` IPC; manifest Secret
+masking fails closed. Deletes carry a UID precondition. App polling is
+generation-guarded so a response from an old cluster/namespace is never
+rendered into the new one.
 
 ## Commands
 

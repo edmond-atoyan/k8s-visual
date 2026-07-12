@@ -97,47 +97,132 @@ pub fn list_contexts() -> Result<Vec<ContextInfo>> {
         .collect())
 }
 
-/// Write a copy of the user's kubeconfig with `current-context` pinned to
-/// the given context, into a user-private runtime directory (0600). kubectl
-/// and helm have no environment variable for the context itself, so pointing
-/// `KUBECONFIG` at a pinned copy is the only way to make shell tools agree
-/// with the cluster the app is connected to.
-pub fn write_pinned_kubeconfig(context: &str) -> Result<std::path::PathBuf> {
-    let mut kubeconfig = Kubeconfig::read().map_err(|e| Error::Kubeconfig(e.to_string()))?;
-    if !kubeconfig.contexts.iter().any(|c| c.name == context) {
-        return Err(Error::Invalid(format!(
-            "context \"{context}\" not found in kubeconfig"
-        )));
+/// Reduce a kubeconfig to ONLY the given context, its cluster, and its user,
+/// with the context's default namespace set. The pinned file must carry no
+/// other identities: it is written to disk for the integrated terminal, and
+/// a copy of the full merged kubeconfig would widen the blast radius of any
+/// file exposure for no benefit.
+fn pin_kubeconfig(full: Kubeconfig, context: &str, namespace: Option<&str>) -> Result<Kubeconfig> {
+    let named = full
+        .contexts
+        .iter()
+        .find(|c| c.name == context)
+        .cloned()
+        .ok_or_else(|| Error::Invalid(format!("context \"{context}\" not found in kubeconfig")))?;
+    let mut ctx = named
+        .context
+        .ok_or_else(|| Error::Invalid(format!("context \"{context}\" has no body")))?;
+    if let Some(ns) = namespace {
+        ctx.namespace = Some(ns.to_string());
     }
-    kubeconfig.current_context = Some(context.to_string());
+    let cluster = full
+        .clusters
+        .iter()
+        .find(|c| c.name == ctx.cluster)
+        .cloned()
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "cluster \"{}\" referenced by context \"{context}\" not found",
+                ctx.cluster
+            ))
+        })?;
+    let auth = ctx
+        .user
+        .as_ref()
+        .and_then(|user| full.auth_infos.iter().find(|a| &a.name == user).cloned());
+    Ok(Kubeconfig {
+        current_context: Some(context.to_string()),
+        contexts: vec![kube::config::NamedContext {
+            name: context.to_string(),
+            context: Some(ctx),
+            ..Default::default()
+        }],
+        clusters: vec![cluster],
+        auth_infos: auth.into_iter().collect(),
+        ..Default::default()
+    })
+}
+
+/// Write a kubeconfig for one integrated-terminal session: minimal identity
+/// (see [`pin_kubeconfig`]), random unpredictable filename, created
+/// atomically with `O_EXCL` and mode 0600 (so a pre-created file or symlink
+/// at the path fails the open instead of being followed). kubectl and helm
+/// have no environment variable for the context itself, so a pinned file is
+/// the only way to make shell tools agree with the app's connection. The
+/// caller owns the file's lifetime and must delete it when the session ends.
+pub fn write_pinned_kubeconfig(
+    context: &str,
+    namespace: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    let full = Kubeconfig::read().map_err(|e| Error::Kubeconfig(e.to_string()))?;
+    let pinned = pin_kubeconfig(full, context, namespace)?;
+    write_session_kubeconfig(&pinned)
+}
+
+/// An empty kubeconfig (no contexts, no credentials) for shells opened while
+/// no real cluster is connected (demo mode). Without it the shell would
+/// inherit the user's real kubeconfig - a "demo" terminal must never be able
+/// to silently target a real cluster.
+pub fn write_empty_kubeconfig() -> Result<std::path::PathBuf> {
+    write_session_kubeconfig(&Kubeconfig::default())
+}
+
+fn write_session_kubeconfig(cfg: &Kubeconfig) -> Result<std::path::PathBuf> {
+    use std::io::Write;
+
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join("k8s-visual");
     std::fs::create_dir_all(&dir)
         .map_err(|e| Error::Invalid(format!("cannot create {}: {e}", dir.display())))?;
-    let slug: String = context
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .take(80)
-        .collect();
-    let path = dir.join(format!("kubeconfig-{slug}.yaml"));
-    let yaml = serde_yaml::to_string(&kubeconfig)
-        .map_err(|e| Error::Invalid(format!("could not encode kubeconfig: {e}")))?;
-    std::fs::write(&path, yaml)
-        .map_err(|e| Error::Invalid(format!("cannot write {}: {e}", path.display())))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| Error::Invalid(format!("cannot secure {}: {e}", dir.display())))?;
     }
+    // Best-effort prune of files a crashed session left behind (a live
+    // session's file is younger than this by definition).
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age.as_secs() > 24 * 3600);
+            if stale {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    // Unpredictable name from the OS CSPRNG - the path must not be guessable.
+    let mut random = [0u8; 16];
+    std::io::Read::read_exact(
+        &mut std::fs::File::open("/dev/urandom")
+            .map_err(|e| Error::Invalid(format!("cannot open /dev/urandom: {e}")))?,
+        &mut random,
+    )
+    .map_err(|e| Error::Invalid(format!("cannot read /dev/urandom: {e}")))?;
+    let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let path = dir.join(format!("kubeconfig-{hex}.yaml"));
+
+    let yaml = serde_yaml::to_string(cfg)
+        .map_err(|e| Error::Invalid(format!("could not encode kubeconfig: {e}")))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|e| Error::Invalid(format!("cannot create {}: {e}", path.display())))?;
+    file.write_all(yaml.as_bytes())
+        .map_err(|e| Error::Invalid(format!("cannot write {}: {e}", path.display())))?;
     Ok(path)
 }
 
@@ -485,5 +570,78 @@ impl Bridge {
 
     pub async fn exec(&self, req: &ExecRequest) -> Result<ExecResult> {
         exec::run(&self.client, req).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kube::config::{NamedAuthInfo, NamedCluster, NamedContext};
+
+    fn two_identity_kubeconfig() -> Kubeconfig {
+        let ctx = |name: &str, cluster: &str, user: &str| NamedContext {
+            name: name.into(),
+            context: Some(kube::config::Context {
+                cluster: cluster.into(),
+                user: Some(user.into()),
+                namespace: Some("original-ns".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        Kubeconfig {
+            current_context: Some("prod".into()),
+            contexts: vec![
+                ctx("prod", "prod-cluster", "prod-user"),
+                ctx("staging", "staging-cluster", "staging-user"),
+            ],
+            clusters: vec![
+                NamedCluster {
+                    name: "prod-cluster".into(),
+                    ..Default::default()
+                },
+                NamedCluster {
+                    name: "staging-cluster".into(),
+                    ..Default::default()
+                },
+            ],
+            auth_infos: vec![
+                NamedAuthInfo {
+                    name: "prod-user".into(),
+                    ..Default::default()
+                },
+                NamedAuthInfo {
+                    name: "staging-user".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pinned_kubeconfig_keeps_only_the_selected_identity() {
+        let pinned = pin_kubeconfig(two_identity_kubeconfig(), "staging", Some("team-a")).unwrap();
+        assert_eq!(pinned.current_context.as_deref(), Some("staging"));
+        assert_eq!(pinned.contexts.len(), 1, "other contexts must be dropped");
+        assert_eq!(pinned.clusters.len(), 1, "other clusters must be dropped");
+        assert_eq!(
+            pinned.auth_infos.len(),
+            1,
+            "other credentials must be dropped"
+        );
+        assert_eq!(pinned.clusters[0].name, "staging-cluster");
+        assert_eq!(pinned.auth_infos[0].name, "staging-user");
+        let ctx = pinned.contexts[0].context.as_ref().unwrap();
+        assert_eq!(
+            ctx.namespace.as_deref(),
+            Some("team-a"),
+            "UI namespace overrides the file's"
+        );
+    }
+
+    #[test]
+    fn pinning_an_unknown_context_fails() {
+        assert!(pin_kubeconfig(two_identity_kubeconfig(), "nope", None).is_err());
     }
 }

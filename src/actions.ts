@@ -20,12 +20,33 @@ export function setKubectlContext(context: string | null): void {
 }
 
 /** Quote a shell argument only when it needs it, to keep hints readable. */
-function shellArg(s: string): string {
+export function shellArg(s: string): string {
   return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 function ctx(): string {
   return kubectlContext ? ` --context ${shellArg(kubectlContext)}` : "";
+}
+
+/**
+ * THE formatter for displayed shell commands: pins a kubectl command with
+ * `--context` / a helm command with `--kube-context` for the connected
+ * cluster (no-op in demo mode). The flag lands before any pipe so it stays
+ * part of the kubectl/helm invocation. Every command the app renders outside
+ * the action catalog (problem-chain checks, insights, Access, Helm) must go
+ * through this.
+ */
+export function pinCommand(cmd: string): string {
+  if (!kubectlContext) return cmd;
+  if (/\s--(context|kube-context)[ =]/.test(cmd)) return cmd; // already pinned
+  const flag = cmd.startsWith("helm ")
+    ? ` --kube-context ${shellArg(kubectlContext)}`
+    : cmd.startsWith("kubectl ")
+      ? ` --context ${shellArg(kubectlContext)}`
+      : null;
+  if (!flag) return cmd;
+  const pipe = cmd.indexOf(" | ");
+  return pipe === -1 ? cmd + flag : cmd.slice(0, pipe) + flag + cmd.slice(pipe);
 }
 
 export const RISK_LABEL: Record<Risk, string> = {
@@ -250,7 +271,7 @@ export function actionsFor(r: ResourceSummary): ActionDescriptor[] {
       confirmName: risk === "danger",
       describe: deleteDescription,
       kubectl: (res) => `kubectl delete ${p.short}/${res.name}${ns}${ctx()}`,
-      build: (res) => ({ type: "deleteResource", kind: res.kind, namespace: res.namespace, name: res.name }),
+      build: (res) => ({ type: "deleteResource", kind: res.kind, namespace: res.namespace, name: res.name, uid: res.uid }),
     });
   }
 

@@ -117,8 +117,9 @@ pub struct HelmRevision {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+/// Release detail WITHOUT values: values commonly contain credentials, so
+/// they are served only by the explicit `helm_release_values` command.
 pub struct HelmReleaseDetail {
-    pub values: String,
     pub manifest: String,
     pub notes: String,
     pub history: Vec<HelmRevision>,
@@ -469,6 +470,11 @@ pub enum Action {
         kind: String,
         namespace: String,
         name: String,
+        /// UID of the object the user confirmed. Sent as a Kubernetes delete
+        /// precondition: if the object was deleted and recreated under the
+        /// same name in the meantime, the delete fails instead of hitting
+        /// the impostor.
+        uid: String,
     },
     #[serde(rename_all = "camelCase")]
     CordonNode { name: String, cordon: bool },

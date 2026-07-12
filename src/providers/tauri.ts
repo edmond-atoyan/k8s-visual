@@ -75,6 +75,9 @@ export class TauriProvider implements ClusterProvider {
   helmReleaseDetail(namespace: string, name: string): Promise<HelmReleaseDetail> {
     return invoke("helm_release_detail", { namespace, name });
   }
+  helmReleaseValues(namespace: string, name: string): Promise<string> {
+    return invoke("helm_release_values", { namespace, name });
+  }
   helmRepos(): Promise<HelmRepo[]> {
     return invoke("helm_repos");
   }

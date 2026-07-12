@@ -56,9 +56,10 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
   const [doc, setDoc] = useState<{ title: string; text: string } | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [repoForm, setRepoForm] = useState({ name: "", url: "" });
-  // Release values regularly contain credentials - never render them without
-  // an explicit click (same idea as the Secret reveal flow).
-  const [valuesShown, setValuesShown] = useState(false);
+  // Release values regularly contain credentials - they are FETCHED (not
+  // just rendered) only on an explicit click, via a separate IPC call.
+  const [values, setValues] = useState<string | null>(null);
+  const [valuesLoading, setValuesLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,7 +92,7 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
     let cancelled = false;
     setDetail(null);
     setDetailTab("overview");
-    setValuesShown(false);
+    setValues(null);
     provider
       .helmReleaseDetail(selected.namespace, selected.name)
       .then((d) => !cancelled && setDetail(d))
@@ -100,6 +101,16 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
       cancelled = true;
     };
   }, [provider, selected]);
+
+  const loadValues = () => {
+    if (!selected) return;
+    setValuesLoading(true);
+    provider
+      .helmReleaseValues(selected.namespace, selected.name)
+      .then(setValues)
+      .catch((e) => setValues(`# ${String(e)}`))
+      .finally(() => setValuesLoading(false));
+  };
 
   useEffect(() => {
     if (tab !== "charts" || repos !== null) return;
@@ -296,20 +307,28 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
                   disabled={!management}
                   title={gate}
                   onClick={() =>
-                    setPending({
-                      title: `Upgrade ${selected.name}`,
-                      command: `helm upgrade ${selected.name} <chart> -n ${selected.namespace} -f values.yaml`,
-                      danger: true,
-                      values: detail?.values ?? "",
-                      run: (values) =>
-                        provider.helmAction({
-                          op: "upgrade",
-                          namespace: selected.namespace,
-                          release: selected.name,
-                          chart: selected.chart.replace(/-\d[\w.+-]*$/, ""),
-                          values,
+                    // Editing an upgrade starts from the release's current
+                    // values - fetched here, on the explicit action, never
+                    // as part of routine detail loading.
+                    void provider
+                      .helmReleaseValues(selected.namespace, selected.name)
+                      .catch(() => "")
+                      .then((current) =>
+                        setPending({
+                          title: `Upgrade ${selected.name}`,
+                          command: `helm upgrade ${selected.name} <chart> -n ${selected.namespace} -f values.yaml`,
+                          danger: true,
+                          values: current,
+                          run: (values) =>
+                            provider.helmAction({
+                              op: "upgrade",
+                              namespace: selected.namespace,
+                              release: selected.name,
+                              chart: selected.chart.replace(/-\d[\w.+-]*$/, ""),
+                              values,
+                            }),
                         }),
-                    })
+                      )
                   }
                 >
                   upgrade…
@@ -365,17 +384,17 @@ export function HelmView({ provider, namespace, management, snapshot, onSelectRe
 
           {detailTab === "values" && (
             <>
-              {valuesShown ? (
-                <pre className="yaml-pane">{detail ? detail.values || "# no user-supplied values" : "loading…"}</pre>
+              {values !== null ? (
+                <pre className="yaml-pane">{values.trim() === "null" || values.trim() === "" ? "# no user-supplied values" : values}</pre>
               ) : (
                 <div className="issue-box">
                   <p>
-                    Release values often contain passwords, tokens, and other credentials, so they are not shown
-                    automatically. Only view them if you are authorized to see this release's configuration.
+                    Release values often contain passwords, tokens, and other credentials, so they are not even
+                    fetched automatically. Only load them if you are authorized to see this release's configuration.
                   </p>
                   <div className="modal-actions">
-                    <button className="btn primary risk-high" onClick={() => setValuesShown(true)}>
-                      Show values
+                    <button className="btn primary risk-high" disabled={valuesLoading} onClick={loadValues}>
+                      {valuesLoading ? "Loading…" : "Show values"}
                     </button>
                   </div>
                 </div>

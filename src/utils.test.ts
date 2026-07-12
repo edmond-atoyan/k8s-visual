@@ -73,3 +73,20 @@ describe("formatting", () => {
     expect(formatAge(undefined)).toBe("-");
   });
 });
+
+describe("diffLines large-input fallback", () => {
+  it("degrades to a plain replacement instead of freezing on huge diffs", () => {
+    const before = Array.from({ length: 1500 }, (_, i) => `a${i}`).join("\n");
+    const after = Array.from({ length: 1500 }, (_, i) => `b${i}`).join("\n");
+    const d = diffLines(before, after);
+    expect(d.filter((l) => l.type === "del")).toHaveLength(1500);
+    expect(d.filter((l) => l.type === "add")).toHaveLength(1500);
+  });
+
+  it("still trims the common prefix and suffix before falling back", () => {
+    const mid = (s: string) => Array.from({ length: 1200 }, (_, i) => `${s}${i}`).join("\n");
+    const d = diffLines(`same-head\n${mid("x")}\nsame-tail`, `same-head\n${mid("y")}\nsame-tail`);
+    expect(d[0]).toEqual({ type: "same", text: "same-head" });
+    expect(d[d.length - 1]).toEqual({ type: "same", text: "same-tail" });
+  });
+});

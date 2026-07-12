@@ -756,10 +756,15 @@ export class DemoProvider implements ClusterProvider {
     return namespace ? releases.filter((r) => r.namespace === namespace) : releases;
   }
 
+  async helmReleaseValues(_namespace: string, name: string): Promise<string> {
+    return name === "reports"
+      ? 'storage:\n  className: "fast-ssd"\n  size: 5Gi\nreplicas: 1\n'
+      : "image:\n  tag: 2.1.0\nreplicas: 3\ningress:\n  host: shop.example.com\n";
+  }
+
   async helmReleaseDetail(namespace: string, name: string): Promise<HelmReleaseDetail> {
     if (name === "reports") {
       return {
-        values: 'storage:\n  className: "fast-ssd"\n  size: 5Gi\nreplicas: 1\n',
         manifest:
           "# Source: reports/templates/deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: reports\n  namespace: " +
           namespace +
@@ -772,7 +777,6 @@ export class DemoProvider implements ClusterProvider {
       };
     }
     return {
-      values: "image:\n  tag: 2.1.0\nreplicas: 3\ningress:\n  host: shop.example.com\n",
       manifest:
         "# Source: shop/templates/deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: storefront\n  namespace: " +
         namespace +
@@ -951,7 +955,7 @@ export class DemoProvider implements ClusterProvider {
       case "triggerCronJob":
         return this.triggerJob(action.namespace, action.name);
       case "deleteResource":
-        return this.deleteResource(action.namespace, action.kind, action.name);
+        return this.deleteResource(action.namespace, action.kind, action.name, action.uid);
       case "cordonNode": {
         if (action.cordon) this.cordoned.add(action.name);
         else this.cordoned.delete(action.name);
@@ -1163,9 +1167,14 @@ export class DemoProvider implements ClusterProvider {
     return { ok: true, message: `Created Job ${ns}/${jobName} from CronJob ${name}` };
   }
 
-  private deleteResource(ns: string, kind: Kind, name: string): ActionResult {
+  private deleteResource(ns: string, kind: Kind, name: string, uid: string): ActionResult {
     const r = this.find(ns, kind, name);
     if (!r) return { ok: false, message: `${kind} ${ns}/${name} not found` };
+    // Same precondition semantics as the real backend: never delete an
+    // object other than the exact one that was confirmed.
+    if (r.uid !== uid) {
+      return { ok: false, message: `${kind} ${ns}/${name} was replaced since you confirmed - the delete was not performed` };
+    }
     // Delete the resource and everything it (transitively) owns.
     const doomed = new Set<string>([r.uid]);
     let grew = true;

@@ -2058,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "k8s-visual"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "futures",
  "k8s-visual-core",
@@ -2073,7 +2073,7 @@ dependencies = [
 
 [[package]]
 name = "k8s-visual-core"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "futures",
  "k8s-openapi",

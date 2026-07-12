@@ -93,6 +93,8 @@ export function ApplyYamlView({ provider, namespace, management }: Props) {
         Target: namespace <strong>{namespace}</strong> (used for documents without an explicit{" "}
         <code>metadata.namespace</code>). Every apply runs through the API server as{" "}
         <code>kubectl apply --server-side</code> would; a server dry-run is required before the real apply.
+        Multiple documents are applied one by one - Kubernetes has no transactions, so if one fails, the
+        documents before it stay applied (the result will say exactly which).
         {provider.mode === "demo" && " In demo mode the apply is simulated and clearly labelled."}
       </p>
 
@@ -150,6 +152,13 @@ export function ApplyYamlView({ provider, namespace, management }: Props) {
       {applied && (
         <div className={applied.ok ? "result-banner ok" : "error-banner"}>
           <strong>Apply:</strong> {applied.ok ? applied.results.join("; ") : (applied.error ?? "failed")}
+          {!applied.ok && applied.results.length > 0 && (
+            <>
+              {" "}
+              <strong>Already applied before the failure</strong> (multi-document apply is not atomic - these
+              changes are live): {applied.results.join("; ")}
+            </>
+          )}
         </div>
       )}
 

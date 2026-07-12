@@ -115,12 +115,15 @@ async fn cloud_import(
 #[tauri::command]
 async fn connect(
     state: State<'_, AppState>,
+    terminals: State<'_, TerminalManager>,
     context: Option<String>,
 ) -> Result<ClusterInfo, String> {
     let bridge = Bridge::connect(context).await.map_err(|e| e.to_string())?;
     let info = bridge.info.clone();
-    // Every session starts read-only, in the backend too.
+    // Every session starts read-only, in the backend too - and no terminal
+    // pinned to a previous cluster may survive into the new session.
     state.management.store(false, Ordering::SeqCst);
+    terminals.close_all();
     *state.bridge.lock().await = Some(bridge);
     Ok(info)
 }
@@ -130,12 +133,15 @@ async fn disconnect(
     state: State<'_, AppState>,
     forwards: State<'_, Forwards>,
     streams: State<'_, LogStreams>,
+    terminals: State<'_, TerminalManager>,
 ) -> Result<(), String> {
     forwards.0.stop_all().await;
-    // Log-follow streams belong to the old cluster - they must not survive it.
+    // Log-follow streams and terminals belong to the old cluster - neither
+    // may survive it.
     for (_, handle) in streams.0.lock().await.drain() {
         handle.abort();
     }
+    terminals.close_all();
     state.management.store(false, Ordering::SeqCst);
     *state.bridge.lock().await = None;
     Ok(())
@@ -345,30 +351,27 @@ async fn term_open(
     terminals: State<'_, TerminalManager>,
     cols: u16,
     rows: u16,
+    namespace: Option<String>,
     env: Vec<(String, String)>,
     on_data: Channel<String>,
 ) -> Result<u64, String> {
-    // Pin the shell to the cluster the app is connected to: kubectl and helm
-    // ignore the K8S_VISUAL_* variables, so without a pinned KUBECONFIG they
-    // would silently use the kubeconfig current-context - possibly a
-    // different cluster than the one shown in the terminal header.
-    let mut env = env;
+    // Pin the shell to the cluster (and namespace) the app is connected to:
+    // kubectl and helm ignore the K8S_VISUAL_* variables, so without a pinned
+    // KUBECONFIG they would silently use the kubeconfig current-context -
+    // possibly a different cluster than the one shown in the terminal header.
+    // With no connection (demo mode), the shell gets an EMPTY kubeconfig: a
+    // "demo" terminal must not be able to silently target a real cluster.
     let context = {
         let guard = state.bridge.lock().await;
         guard.as_ref().map(|b| b.info.context.clone())
     };
-    if let Some(ctx) = context {
-        match k8s_visual_core::write_pinned_kubeconfig(&ctx) {
-            Ok(path) => env.push(("KUBECONFIG".into(), path.display().to_string())),
-            Err(e) => {
-                // Never open a shell that could target the wrong cluster.
-                return Err(format!(
-                    "could not pin the terminal to context \"{ctx}\": {e}"
-                ));
-            }
-        }
-    }
-    terminals.open(cols, rows, env, on_data)
+    let kubeconfig = match &context {
+        Some(ctx) => k8s_visual_core::write_pinned_kubeconfig(ctx, namespace.as_deref())
+            .map_err(|e| format!("could not pin the terminal to context \"{ctx}\": {e}"))?,
+        None => k8s_visual_core::write_empty_kubeconfig()
+            .map_err(|e| format!("could not prepare the terminal kubeconfig: {e}"))?,
+    };
+    terminals.open(cols, rows, env, kubeconfig, on_data)
 }
 
 #[tauri::command]
@@ -435,6 +438,20 @@ async fn helm_release_detail(
 ) -> Result<HelmReleaseDetail, String> {
     let ctx = app_context(&state).await?;
     k8s_visual_core::helm::release_detail(&ctx, &namespace, &name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Separate from `helm_release_detail` on purpose: release values commonly
+/// contain credentials, so they are fetched only on an explicit user action.
+#[tauri::command]
+async fn helm_release_values(
+    state: State<'_, AppState>,
+    namespace: String,
+    name: String,
+) -> Result<String, String> {
+    let ctx = app_context(&state).await?;
+    k8s_visual_core::helm::release_values(&ctx, &namespace, &name)
         .await
         .map_err(|e| e.to_string())
 }
@@ -547,6 +564,7 @@ pub fn run() {
             helm_status,
             helm_releases,
             helm_release_detail,
+            helm_release_values,
             helm_repos,
             helm_search,
             helm_show,

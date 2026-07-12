@@ -5,6 +5,7 @@
 // the app actually has; nothing is invented. This is also the evidence base
 // for the built-in assistant.
 
+import { pinCommand } from "./actions";
 import { selectorMatches } from "./graph/build";
 import type { EventInfo, Kind, ResourceSummary } from "./types";
 
@@ -278,10 +279,12 @@ export function buildProblemChains(resources: ResourceSummary[], events: EventIn
     }));
   }
 
-  // Merge titles for replica groups, order by severity.
+  // Merge titles for replica groups, pin every check to the connected
+  // cluster's context, order by severity.
   const out = [...merged.values()].map((c) => ({
     ...c,
     title: c.pods.length > 1 ? c.title.replace(/^Pod/, `${c.pods.length} Pods`) : c.title,
+    checks: c.checks.map(pinCommand),
   }));
   return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "critical" ? -1 : 1));
 }

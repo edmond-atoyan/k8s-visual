@@ -19,11 +19,11 @@ use crate::model::*;
 
 pub(crate) fn base(kind: &str, obj: &impl ResourceExt) -> ResourceSummary {
     let mut annotations = obj.annotations().clone();
-    if kind == "Secret" {
-        // kubectl's last-applied annotation embeds the full object, secret
-        // values included - it must never reach the frontend model.
-        annotations.remove("kubectl.kubernetes.io/last-applied-configuration");
-    }
+    // kubectl's last-applied annotation embeds the full applied object - for
+    // Secrets that means secret values, and for any kind it can mean env-var
+    // credentials. It never belongs in the summary model (the YAML view
+    // still shows the real object, masked for Secrets).
+    annotations.remove("kubectl.kubernetes.io/last-applied-configuration");
     ResourceSummary {
         uid: obj.uid().unwrap_or_default(),
         kind: kind.to_string(),

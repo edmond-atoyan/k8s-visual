@@ -47,11 +47,15 @@ describe("DemoProvider", () => {
 
   it("deleting an owned pod triggers a controller replacement", async () => {
     const p = new DemoProvider();
+    const target = (await p.getSnapshot(DEMO_DEFAULT_NAMESPACE)).resources.find(
+      (r) => r.kind === "Pod" && r.name === "storefront-7d9fc6b48-x2lqp",
+    )!;
     const result = await p.performAction({
       type: "deleteResource",
       kind: "Pod",
       namespace: DEMO_DEFAULT_NAMESPACE,
       name: "storefront-7d9fc6b48-x2lqp",
+      uid: target.uid,
     });
     expect(result.ok).toBe(true);
     expect(result.message).toContain("replacement");

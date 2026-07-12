@@ -29,16 +29,23 @@ worth stating explicitly so it can be audited against the code:
   `core/src/actions.rs`, `core/src/yaml.rs`, and the management-gated Helm
   operations in `core/src/helm.rs`, all reachable only through the
   confirmation flow.
-- **The right cluster, always.** Every kubectl command the app displays
-  carries `--context` for the connected cluster, and the integrated terminal
-  receives a `KUBECONFIG` copy pinned to that context - shell tools cannot
-  silently target the kubeconfig current-context.
+- **The right cluster, always.** Every kubectl/helm command the app displays
+  carries an explicit context for the connected cluster, and the integrated
+  terminal receives a minimal per-session `KUBECONFIG` containing only the
+  selected context's identity and namespace - created atomically with mode
+  0600 under an unpredictable name, and deleted when the shell exits. Shell
+  tools cannot silently target the kubeconfig current-context; with no
+  cluster connected (demo mode) the shell gets an empty kubeconfig.
+  Terminals are closed on disconnect or cluster switch - a shell pinned to
+  one cluster never survives the UI moving to another.
 - **Secrets are never fetched implicitly.** Secret listings show names, key
   names and sizes only. Values are fetched by an explicit confirmed reveal,
-  never stored, and masked in YAML views - including the
-  `kubectl.kubernetes.io/last-applied-configuration` annotation, which
-  embeds them. Helm manifests are masked the same way, and release values
-  render only after an explicit reveal. Copying a revealed value places it
+  never stored, and masked in YAML views - and the
+  `kubectl.kubernetes.io/last-applied-configuration` annotation (which can
+  embed applied credentials) is stripped from every resource summary. Helm
+  manifests have Secret values masked fail-closed (an unparseable manifest
+  is withheld, not shown unmasked), and release values are not even fetched
+  until an explicit "Show values" action. Copying a revealed value places it
   in the system clipboard, which is outside the app's control.
 - **Cloud connect never touches credentials.** The EKS/AKS/GKE flows shell
   out to your own `aws`/`az`/`gcloud` CLI, which writes the kubeconfig entry

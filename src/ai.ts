@@ -124,6 +124,12 @@ export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Quote only when needed (matches actions.ts shellArg; kept local to avoid
+ *  a dependency cycle). */
+function argQuote(s: string): string {
+  return /^[\w@%+=:,./-]+$/.test(s) ? s : shellQuote(s);
+}
+
 /**
  * The command typed (NOT executed) into the terminal for "ask AI about this
  * resource". The user reviews and presses Enter themselves.
@@ -136,9 +142,10 @@ export function askAiCommand(tool: AiToolId, summary: string): string {
   return `${tool} ${shellQuote(prompt)}`;
 }
 
-/** The kubectl prefix matching the app's active connection - for copy/paste. */
+/** The kubectl prefix matching the app's active connection - for copy/paste.
+ *  Shell-quoted: context names (EKS ARNs etc.) are not always plain words. */
 export function kubectlPrefix(context: string, namespace: string): string {
-  return `kubectl --context ${context} --namespace ${namespace} `;
+  return `kubectl --context ${argQuote(context)} --namespace ${argQuote(namespace)} `;
 }
 
 // --- command risk analysis --------------------------------------------------------

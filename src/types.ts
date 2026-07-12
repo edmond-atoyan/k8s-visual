@@ -277,7 +277,7 @@ export type Action =
   | { type: "pauseRollout"; namespace: string; name: string; pause: boolean }
   | { type: "suspendCronJob"; namespace: string; name: string; suspend: boolean }
   | { type: "triggerCronJob"; namespace: string; name: string }
-  | { type: "deleteResource"; kind: Kind; namespace: string; name: string }
+  | { type: "deleteResource"; kind: Kind; namespace: string; name: string; uid: string }
   | { type: "cordonNode"; name: string; cordon: boolean };
 
 export interface ActionResult {
@@ -367,8 +367,9 @@ export interface HelmRevision {
   description: string;
 }
 
+/** Release detail WITHOUT values: values commonly contain credentials, so
+ *  they are fetched only by the explicit `helmReleaseValues` call. */
 export interface HelmReleaseDetail {
-  values: string;
   manifest: string;
   notes: string;
   history: HelmRevision[];
@@ -424,6 +425,8 @@ export interface ClusterProvider {
   helmStatus(): Promise<HelmStatus>;
   helmReleases(namespace?: string): Promise<HelmRelease[]>;
   helmReleaseDetail(namespace: string, name: string): Promise<HelmReleaseDetail>;
+  /** Explicit, separate fetch - release values commonly contain credentials. */
+  helmReleaseValues(namespace: string, name: string): Promise<string>;
   helmRepos(): Promise<HelmRepo[]>;
   helmSearch(query: string): Promise<HelmChartHit[]>;
   helmShow(kind: "values" | "chart" | "readme", chart: string): Promise<string>;

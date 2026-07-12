@@ -1,6 +1,7 @@
 // Small shared UI pieces used across views.
 
 import { useState } from "react";
+import { pinCommand } from "../actions";
 import { RISK_LABEL, type Risk } from "../actions";
 import type { Health } from "../types";
 
@@ -33,8 +34,11 @@ export function RiskBadge({ risk }: { risk: Risk }) {
 }
 
 /** The equivalent CLI command, shown so users learn the CLI too. */
-export function KubectlHint({ command, label = "kubectl equivalent" }: { command: string; label?: string }) {
+export function KubectlHint({ command: raw, label = "kubectl equivalent" }: { command: string; label?: string }) {
   const [copied, setCopied] = useState(false);
+  // One choke point: every displayed kubectl/helm command carries the
+  // connected cluster's context (idempotent - already-pinned strings pass).
+  const command = pinCommand(raw);
   return (
     <div className="kubectl-hint">
       <span className="kubectl-label">{label}</span>

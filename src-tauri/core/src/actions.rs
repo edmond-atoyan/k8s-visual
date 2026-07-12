@@ -137,9 +137,20 @@ pub async fn perform(client: &Client, action: Action) -> Result<ActionResult> {
             kind,
             namespace,
             name,
+            uid,
         } => {
             let api = yaml::dynamic_api(client, &kind, &namespace)?;
-            api.delete(&name, &DeleteParams::default()).await?;
+            // Precondition: only delete the exact object that was confirmed.
+            // A same-named object created since then fails with a conflict
+            // instead of being silently deleted in its place.
+            let params = DeleteParams {
+                preconditions: Some(kube::api::Preconditions {
+                    uid: Some(uid),
+                    resource_version: None,
+                }),
+                ..DeleteParams::default()
+            };
+            api.delete(&name, &params).await?;
             Ok(ok(format!("Deleted {kind} {namespace}/{name}")))
         }
 

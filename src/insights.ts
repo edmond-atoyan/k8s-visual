@@ -4,6 +4,7 @@
 // are unknowable (Pending pods, missing Metrics API) are explained rather
 // than shown as zeros.
 
+import { pinCommand } from "./actions";
 import type { ProblemChain } from "./chains";
 import type { MetricsSnapshot, ResourceSummary } from "./types";
 
@@ -188,5 +189,7 @@ export function computeMetricsInsights(opts: {
     }
   }
 
-  return out.sort((a, b) => ord[a.severity] - ord[b.severity]);
+  return out
+    .map((i) => (i.checks ? { ...i, checks: i.checks.map(pinCommand) } : i))
+    .sort((a, b) => ord[a.severity] - ord[b.severity]);
 }

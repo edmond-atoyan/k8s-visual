@@ -372,7 +372,8 @@ function EventsTab({ provider, resource: r }: Props) {
     provider
       .getEvents(r.namespace)
       .then((all) => {
-        if (!cancelled) setEvents(all.filter((e) => e.involvedName === r.name));
+        // Kind AND name: a Pod and a PVC sharing a name must not mix events.
+        if (!cancelled) setEvents(all.filter((e) => e.involvedKind === r.kind && e.involvedName === r.name));
       })
       .catch((e) => setError(String(e)));
     return () => {
@@ -472,7 +473,11 @@ function YamlTab({ provider, resource: r, management }: Props) {
     setBusy(true);
     try {
       const res = await provider.applyYaml(edited, false, r.namespace);
-      setApplyMsg(res.ok ? `Applied: ${res.results.join("; ")}` : `Apply failed: ${res.error}`);
+      setApplyMsg(
+        res.ok
+          ? `Applied: ${res.results.join("; ")}`
+          : `Apply failed: ${res.error}${res.results.length > 0 ? ` - already applied before the failure: ${res.results.join("; ")}` : ""}`,
+      );
       if (res.ok) {
         setYaml(edited);
         setEditing(false);

@@ -90,3 +90,53 @@ describe("actionsFor", () => {
     }
   });
 });
+
+describe("kubectl context pinning", () => {
+  it("appends --context to kubectl and --kube-context to helm commands", async () => {
+    const { pinCommand, setKubectlContext } = await import("./actions");
+    setKubectlContext("prod");
+    try {
+      expect(pinCommand("kubectl get pods -n shop")).toBe("kubectl get pods -n shop --context prod");
+      expect(pinCommand("helm list -n shop")).toBe("helm list -n shop --kube-context prod");
+    } finally {
+      setKubectlContext(null);
+    }
+  });
+
+  it("pins before a pipe and quotes exotic context names", async () => {
+    const { pinCommand, setKubectlContext } = await import("./actions");
+    setKubectlContext("my ctx");
+    try {
+      expect(pinCommand("kubectl describe nodes | grep -A 6 Allocated")).toBe(
+        "kubectl describe nodes --context 'my ctx' | grep -A 6 Allocated",
+      );
+    } finally {
+      setKubectlContext(null);
+    }
+  });
+
+  it("is idempotent and leaves non-kubectl commands and demo mode alone", async () => {
+    const { pinCommand, setKubectlContext } = await import("./actions");
+    expect(pinCommand("kubectl get pods")).toBe("kubectl get pods"); // no context set (demo)
+    setKubectlContext("prod");
+    try {
+      const once = pinCommand("kubectl get pods");
+      expect(pinCommand(once)).toBe(once); // already pinned
+      expect(pinCommand("aws eks list-clusters")).toBe("aws eks list-clusters");
+    } finally {
+      setKubectlContext(null);
+    }
+  });
+
+  it("keeps ARN-style contexts readable without quotes", async () => {
+    const { pinCommand, setKubectlContext } = await import("./actions");
+    setKubectlContext("arn:aws:eks:eu-west-1:123456789012:cluster/shop");
+    try {
+      expect(pinCommand("kubectl get pods")).toBe(
+        "kubectl get pods --context arn:aws:eks:eu-west-1:123456789012:cluster/shop",
+      );
+    } finally {
+      setKubectlContext(null);
+    }
+  });
+});

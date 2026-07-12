@@ -161,12 +161,17 @@ export default function App() {
   const connect = useCallback(async (prov: ClusterProvider, context?: string) => {
     setConnecting(context ?? "demo");
     setError(null);
+    // Invalidate every in-flight poll: a response started against the old
+    // cluster must never be written into the new cluster's state.
+    pollGen.current++;
+    let backendConnected = false;
     try {
       // Leaving a still-connected cluster (switch flow): close it first.
       if (providerRef.current && providerRef.current !== prov) {
         await providerRef.current.disconnect().catch(() => {});
       }
       const info = await prov.connect(context);
+      backendConnected = true;
       const first = await prov.getOverview();
       setProvider(prov);
       setCluster(info);
@@ -196,6 +201,17 @@ export default function App() {
       setSelectedUid(null);
     } catch (e) {
       setError(String(e));
+      if (backendConnected) {
+        // The backend is already on the NEW cluster but the UI never adopted
+        // it. Leaving things as-is would show one cluster while every call
+        // hits another - disconnect so both sides agree on "no session".
+        await prov.disconnect().catch(() => {});
+        setProvider(null);
+        setCluster(null);
+        setOverview(null);
+        setSnapshot(null);
+        setKubectlContext(null);
+      }
     } finally {
       setConnecting(null);
     }
@@ -241,21 +257,27 @@ export default function App() {
 
   // Poll overview + the selected namespace's snapshot. Identical results are
   // dropped before setState so an idle cluster causes zero re-renders (and
-  // therefore zero visible repaint) between polls.
+  // therefore zero visible repaint) between polls. Every response is guarded
+  // by a generation counter: a request that started against an old cluster
+  // or namespace resolves late and must be discarded, never rendered.
   const busy = useRef(false);
+  const pollGen = useRef(0);
   const lastOverview = useRef("");
   const lastSnapshot = useRef("");
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (gen?: number) => {
+    const myGen = gen ?? pollGen.current;
     if (!provider || busy.current) return;
     busy.current = true;
     try {
       const ov = await provider.getOverview();
+      if (pollGen.current !== myGen) return;
       const ovJson = JSON.stringify(ov);
       if (ovJson !== lastOverview.current) {
         lastOverview.current = ovJson;
         setOverview(ov);
       }
       const snap = await provider.getSnapshot(namespace);
+      if (pollGen.current !== myGen) return;
       const snapJson = JSON.stringify(snap);
       if (snapJson !== lastSnapshot.current) {
         lastSnapshot.current = snapJson;
@@ -270,7 +292,7 @@ export default function App() {
       }
       setError(null);
     } catch (e) {
-      setError(String(e));
+      if (pollGen.current === myGen) setError(String(e));
     } finally {
       busy.current = false;
     }
@@ -281,8 +303,9 @@ export default function App() {
     setSnapshot(null);
     lastOverview.current = "";
     lastSnapshot.current = "";
-    void refresh();
-    const timer = setInterval(() => void refresh(), POLL_MS);
+    const gen = ++pollGen.current;
+    void refresh(gen);
+    const timer = setInterval(() => void refresh(gen), POLL_MS);
     return () => clearInterval(timer);
   }, [provider, refresh]);
 

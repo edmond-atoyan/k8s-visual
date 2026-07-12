@@ -125,10 +125,12 @@ Three ways in, one Kubernetes model:
 ### Terminal & AI (optional, power users)
 - **Integrated terminal** (Ctrl+`) - your real shell in a PTY with tabs,
   GPU-accelerated rendering, and full TUI support (`top`, `htop`, alternate
-  screen, resize). Every session gets a `KUBECONFIG` copy pinned to the
-  cluster the app is connected to, so `kubectl` and `helm` in the shell
-  always target the context shown in the header - your real kubeconfig and
-  its current-context are never touched
+  screen, resize). Every session gets a minimal per-session `KUBECONFIG`
+  holding only the connected context's identity and your selected namespace
+  (created private with mode 0600, deleted when the session ends), so
+  `kubectl` and `helm` in the shell always target what the header shows -
+  your real kubeconfig is never touched. In demo mode the shell gets an
+  empty kubeconfig: a demo terminal cannot silently reach a real cluster
 - **Best-effort guard rail**: dangerous kubectl commands (delete namespace /
   PV / PVC / secret, `--force`, drain, apply, edit) are held at Enter - a
   confirmation in management mode, blocked with a hint in read-only mode.

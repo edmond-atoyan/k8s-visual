@@ -148,6 +148,9 @@ function TermSession({ show, cluster, namespace, management, theme, pendingInput
     void invoke<number>("term_open", {
       cols: term.cols,
       rows: term.rows,
+      // Pins the session kubeconfig's default namespace (kubectl ignores the
+      // K8S_VISUAL_* variables - they are informational for the user).
+      namespace,
       env: [
         ["K8S_VISUAL_CONTEXT", cluster.context],
         ["K8S_VISUAL_NAMESPACE", namespace],
